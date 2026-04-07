@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>VRM BlendShape Editor</title>
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <div id="app">
+      <!-- 編集用サイドバー -->
+      <aside id="sidebar">
+        <header>
+          <h1>VRM BlendShape Editor</h1>
+          <div class="file-action">
+            <label for="vrm-upload" class="btn primary">Load VRM</label>
+            <input type="file" id="vrm-upload" accept=".vrm" style="display:none;" />
+            <button id="vrm-download" class="btn" disabled>Export VRM</button>
+          </div>
+        </header>
+
+        <div id="editor-container" class="hidden">
+          <div class="tabs" id="preset-tabs">
+            <!-- プリセットのタブが動的に生成される -->
+          </div>
+
+          <div class="preset-header">
+            <h2 id="current-preset-name">Preset: Joy</h2>
+            <div class="preview-slider">
+              <label>Preview Amount <span id="preview-val">100</span>%</label>
+              <input type="range" id="preview-amount" min="0" max="100" value="100" />
+            </div>
+          </div>
+
+          <div id="mesh-targets" class="mesh-targets-container">
+            <!-- 選択されたプリセットに対する全モーフターゲットのリストとスライダーが生成される -->
+          </div>
+        </div>
+
+        <div id="loading" class="hidden">処理中...</div>
+      </aside>
+
+      <!-- 3Dビューア -->
+      <main id="viewer">
+        <canvas id="main-canvas"></canvas>
+      </main>
+    </div>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>
