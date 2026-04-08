@@ -350,32 +350,68 @@ document.getElementById('fbx-upload').addEventListener('change', (e) => {
   const url = URL.createObjectURL(file);
   const loader = new FBXLoader();
   loader.load(url, (fbx) => {
-    if (fbx.animations && fbx.animations.length > 0) {
-      const clip = fbx.animations[0];
+    // 最初の有効なアニメーションを探す（通常 .animations[0] が mixamo.com ）
+    const clip = THREE.AnimationClip.findByName(fbx.animations, 'mixamo.com') || fbx.animations[0];
+    if (clip) {
       const tracks = [];
+      const restRotationInverse = new THREE.Quaternion();
+      const parentRestWorldRotation = new THREE.Quaternion();
+      const _quatA = new THREE.Quaternion();
+
+      // hipsの高さから全体スケールを計算して歩幅調整
+      const mixamoHips = fbx.getObjectByName('mixamorigHips');
+      const motionHipsHeight = mixamoHips ? mixamoHips.position.y : 1;
+      const vrmHipsHeight = currentVRM.humanoid.normalizedRestPose.hips ? currentVRM.humanoid.normalizedRestPose.hips.position[1] : 1;
+      const hipsPositionScale = vrmHipsHeight / motionHipsHeight;
 
       clip.tracks.forEach((track) => {
         const trackSplits = track.name.split('.');
         const mixamoRigName = trackSplits[0];
+        const propertyName = trackSplits[1];
         const vrmBoneName = mixamoVRMRigMap[mixamoRigName];
+        const mixamoRigNode = fbx.getObjectByName(mixamoRigName);
         
-        if (vrmBoneName) {
-          const vrmNode = currentVRM.humanoid.getNormalizedBoneNode(vrmBoneName);
-          if (vrmNode) {
-            const trackName = vrmNode.name + '.' + trackSplits[1];
-            // Position: MixamoのPositionは通常hipsにのみ適用
-            if (trackSplits[1] === 'position' && vrmBoneName === 'hips') {
-              // 縮尺調整 (通常Mixamo FBXは1/100にスケールダウンしてVRMのメートル単位に合わせる)
-              const values = track.values.map(v => v * 0.01);
-              tracks.push(new THREE.VectorKeyframeTrack(trackName, track.times, values));
-            } else if (trackSplits[1] === 'quaternion') {
-              tracks.push(new THREE.QuaternionKeyframeTrack(trackName, track.times, track.values));
+        if (vrmBoneName && mixamoRigNode) {
+          const vrmNodeName = currentVRM.humanoid.getNormalizedBoneNode(vrmBoneName)?.name;
+          if (vrmNodeName) {
+            
+            // Mixamo骨の初期レストポーズ（ワールド回転）を保存
+            mixamoRigNode.getWorldQuaternion(restRotationInverse).invert();
+            mixamoRigNode.parent.getWorldQuaternion(parentRestWorldRotation);
+
+            if (track instanceof THREE.QuaternionKeyframeTrack) {
+              // クォータニオンの変換
+              for (let i = 0; i < track.values.length; i += 4) {
+                const flatQuaternion = track.values.slice(i, i + 4);
+                _quatA.fromArray(flatQuaternion);
+                
+                // 親のレスト時ワールド回転 * トラックの回転 * 自己レスト時ワールド回転の逆
+                _quatA.premultiply(parentRestWorldRotation).multiply(restRotationInverse);
+                _quatA.toArray(flatQuaternion);
+
+                flatQuaternion.forEach((v, index) => {
+                  track.values[index + i] = v;
+                });
+              }
+
+              tracks.push(
+                new THREE.QuaternionKeyframeTrack(
+                  `${vrmNodeName}.${propertyName}`,
+                  track.times,
+                  // VRM 0.x向けに XとZを反転
+                  track.values.map((v, i) => (i % 2 === 0 ? -v : v))
+                )
+              );
+            } else if (track instanceof THREE.VectorKeyframeTrack && propertyName === 'position') {
+              // 位置の変換（Hips用）VRM 0.x向けに XとZを反転
+              const value = track.values.map((v, i) => (i % 3 !== 1 ? -v : v) * hipsPositionScale);
+              tracks.push(new THREE.VectorKeyframeTrack(`${vrmNodeName}.${propertyName}`, track.times, value));
             }
           }
         }
       });
 
-      const retargetedClip = new THREE.AnimationClip(clip.name, clip.duration, tracks);
+      const retargetedClip = new THREE.AnimationClip('vrmAnimation', clip.duration, tracks);
       
       if (currentMixer) {
         currentMixer.stopAllAction();
