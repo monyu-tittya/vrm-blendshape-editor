@@ -42,7 +42,22 @@
                 <label for="look-at-camera">Look At Camera</label>
               </div>
             </div>
-            <button id="vrm-download" class="btn" disabled>Export VRM</button>
+          </div>
+          <div class="file-action" style="margin-top: 10px;">
+            <label for="stage-upload" class="btn">Load Stage</label>
+            <input type="file" id="stage-upload" accept=".fbx,.glb,.gltf" style="display:none;" />
+            <button id="vrm-download" class="btn primary" disabled>Export VRM</button>
+          </div>
+          <div id="stage-controls" class="hidden" style="margin-top: 10px; padding: 10px; background: #252526; border-radius: 4px;">
+            <div style="font-size: 0.85rem; margin-bottom: 5px; color: var(--primary-hover);">Stage Options</div>
+            <div class="preview-slider">
+              <label>Scale <span id="stage-scale-val">100</span>%</label>
+              <input type="range" id="stage-scale" min="1" max="500" value="100" />
+            </div>
+            <div class="preview-slider" style="margin-top: 5px;">
+              <label>Height (Y) <span id="stage-y-val">0.00</span>m</label>
+              <input type="range" id="stage-y" min="-500" max="500" value="0" />
+            </div>
           </div>
         </header>
 

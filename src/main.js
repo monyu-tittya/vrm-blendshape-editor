@@ -8,6 +8,7 @@ import { GLBEditor } from './glbParser.js';
 
 let currentVRM = null;
 let currentGLTF = null;
+let currentStage = null;
 let glbEditor = null;
 let blendShapeGroups = [];
 let meshesWithTargets = [];
@@ -887,3 +888,78 @@ function loadBvhFromUrl(url, onComplete) {
     if (onComplete) onComplete();
   });
 }
+
+// Stage Loading
+document.getElementById('stage-upload').addEventListener('change', (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+
+  document.getElementById('loading').classList.remove('hidden');
+  const url = URL.createObjectURL(file);
+  const ext = file.name.split('.').pop().toLowerCase();
+
+  const handleStageLoad = (stageObject) => {
+    if (currentStage) {
+      scene.remove(currentStage);
+      // メモリ解放（必要最低限）
+      currentStage.traverse((child) => {
+        if (child.isMesh) {
+          child.geometry.dispose();
+          if (Array.isArray(child.material)) child.material.forEach(m => m.dispose());
+          else child.material.dispose();
+        }
+      });
+    }
+
+    currentStage = stageObject;
+    scene.add(currentStage);
+    
+    // スライダーのリセット
+    document.getElementById('stage-scale').value = 100;
+    document.getElementById('stage-scale-val').textContent = 100;
+    document.getElementById('stage-y').value = 0;
+    document.getElementById('stage-y-val').textContent = "0.00";
+    currentStage.scale.set(1, 1, 1);
+    currentStage.position.set(0, 0, 0);
+
+    // UI表示
+    document.getElementById('stage-controls').classList.remove('hidden');
+    document.getElementById('loading').classList.add('hidden');
+    URL.revokeObjectURL(url);
+  };
+
+  const throwError = (err) => {
+    console.error(err);
+    alert('Failed to load stage.');
+    document.getElementById('loading').classList.add('hidden');
+    URL.revokeObjectURL(url);
+  };
+
+  if (ext === 'fbx') {
+    const loader = new FBXLoader();
+    loader.load(url, handleStageLoad, undefined, throwError);
+  } else if (ext === 'glb' || ext === 'gltf') {
+    const loader = new GLTFLoader();
+    loader.load(url, (gltf) => handleStageLoad(gltf.scene), undefined, throwError);
+  } else {
+    alert("Unsupported stage format. Please use FBX or GLB/GLTF.");
+    document.getElementById('loading').classList.add('hidden');
+  }
+});
+
+// Stage Option Sliders
+document.getElementById('stage-scale').addEventListener('input', (e) => {
+  const scale = Number(e.target.value) / 100;
+  document.getElementById('stage-scale-val').textContent = e.target.value;
+  if (currentStage) {
+    currentStage.scale.set(scale, scale, scale);
+  }
+});
+
+document.getElementById('stage-y').addEventListener('input', (e) => {
+  const yOffset = Number(e.target.value) / 100;
+  document.getElementById('stage-y-val').textContent = yOffset.toFixed(2);
+  if (currentStage) {
+    currentStage.position.y = yOffset;
+  }
+});
