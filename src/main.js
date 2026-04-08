@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { FBXLoader } from 'three/examples/jsm/loaders/FBXLoader.js';
+import { BVHLoader } from 'three/examples/jsm/loaders/BVHLoader.js';
 import { VRMLoaderPlugin } from '@pixiv/three-vrm';
 import { GLBEditor } from './glbParser.js';
 
@@ -501,6 +502,90 @@ const mixamoVRMRigMap = {
   mixamorigRightHandPinky3: 'rightLittleDistal'
 };
 
+// Common BVH -> VRM Bone Mapping
+const bvhVRMRigMap = {
+  'Hips': 'hips',
+  'Chest': 'spine',
+  'Chest2': 'chest',
+  'Neck': 'neck',
+  'Head': 'head',
+  'LeftCollar': 'leftShoulder',
+  'LeftUpArm': 'leftUpperArm',
+  'LeftLowArm': 'leftLowerArm',
+  'LeftHand': 'leftHand',
+  'RightCollar': 'rightShoulder',
+  'RightUpArm': 'rightUpperArm',
+  'RightLowArm': 'rightLowerArm',
+  'RightHand': 'rightHand',
+  'LeftUpLeg': 'leftUpperLeg',
+  'LeftLowLeg': 'leftLowerLeg',
+  'LeftFoot': 'leftFoot',
+  'RightUpLeg': 'rightUpperLeg',
+  'RightLowLeg': 'rightLowerLeg',
+  'RightFoot': 'rightFoot',
+  // Alternate lowercases for CMU formats
+  'hips': 'hips',
+  'spine': 'spine',
+  'chest': 'chest',
+  'neck': 'neck',
+  'head': 'head',
+  'leftShoulder': 'leftShoulder',
+  'leftUpArm': 'leftUpperArm',
+  'leftLowArm': 'leftLowerArm',
+  'leftHand': 'leftHand',
+  'rightShoulder': 'rightShoulder',
+  'rightUpArm': 'rightUpperArm',
+  'rightLowArm': 'rightLowerArm',
+  'rightHand': 'rightHand',
+  'leftUpLeg': 'leftUpperLeg',
+  'leftLowLeg': 'leftLowerLeg',
+  'leftFoot': 'leftFoot',
+  'rightUpLeg': 'rightUpperLeg',
+  'rightLowLeg': 'rightLowerLeg',
+  'rightFoot': 'rightFoot',
+  
+  // MMD English Base (VMD to BVH converted)
+  'Upper body': 'spine',
+  'Upper body2': 'chest',
+  'Lower body': 'hips',
+  'Left shoulder': 'leftShoulder',
+  'Left arm': 'leftUpperArm',
+  'Left elbow': 'leftLowerArm',
+  'Left wrist': 'leftHand',
+  'Right shoulder': 'rightShoulder',
+  'Right arm': 'rightUpperArm',
+  'Right elbow': 'rightLowerArm',
+  'Right wrist': 'rightHand',
+  'Left leg': 'leftUpperLeg',
+  'Left knee': 'leftLowerLeg',
+  'Left ankle': 'leftFoot',
+  'Right leg': 'rightUpperLeg',
+  'Right knee': 'rightLowerLeg',
+  'Right ankle': 'rightFoot',
+
+  // Blender / AutoRig / Mixamo
+  'LeftArm': 'leftUpperArm',
+  'LeftForeArm': 'leftLowerArm',
+  'RightArm': 'rightUpperArm',
+  'RightForeArm': 'rightLowerArm',
+  'LeftThigh': 'leftUpperLeg',
+  'LeftCalf': 'leftLowerLeg',
+  'RightThigh': 'rightUpperLeg',
+  'RightCalf': 'rightLowerLeg',
+  'L_UpperArm': 'leftUpperArm',
+  'L_LowerArm': 'leftLowerArm',
+  'L_Hand': 'leftHand',
+  'R_UpperArm': 'rightUpperArm',
+  'R_LowerArm': 'rightLowerArm',
+  'R_Hand': 'rightHand',
+  'L_Thigh': 'leftUpperLeg',
+  'L_Calf': 'leftLowerLeg',
+  'L_Foot': 'leftFoot',
+  'R_Thigh': 'rightUpperLeg',
+  'R_Calf': 'rightLowerLeg',
+  'R_Foot': 'rightFoot'
+};
+
 document.getElementById('fbx-upload').addEventListener('change', (e) => {
   const file = e.target.files[0];
   if (!file || !currentVRM) {
@@ -637,8 +722,168 @@ animSelect.addEventListener('change', (e) => {
   
   // reset file input
   document.getElementById('fbx-upload').value = '';
+  document.getElementById('bvh-upload').value = '';
   
-  loadFbxFromUrl(url, () => {
-    // Keep selection
-  });
+  loadFbxFromUrl(url);
 });
+
+document.getElementById('bvh-upload').addEventListener('change', (e) => {
+  const file = e.target.files[0];
+  if (!file || !currentVRM) {
+    alert("Please load a VRM file first.");
+    return;
+  }
+  const url = URL.createObjectURL(file);
+  loadBvhFromUrl(url, () => URL.revokeObjectURL(url));
+});
+
+function loadBvhFromUrl(url, onComplete) {
+  if (!currentVRM) {
+    alert("Please load a VRM file first.");
+    return;
+  }
+  document.getElementById('loading').classList.remove('hidden');
+
+  const loader = new BVHLoader();
+  loader.load(url, (bvh) => {
+    const clip = bvh.clip;
+    const skeleton = bvh.skeleton;
+    if (clip && skeleton) {
+      // 骨格階層全体を更新しておく（getWorldQuaternion 計算のため）
+      skeleton.bones[0].updateMatrixWorld(true);
+
+      const tracks = [];
+      const restRotationInverse = new THREE.Quaternion();
+      const parentRestWorldRotation = new THREE.Quaternion();
+      const _quatA = new THREE.Quaternion();
+
+      // Hips スケール調整
+      const bvhHips = skeleton.bones.find(b => b.name === 'Hips' || b.name === 'hips');
+      // 親座標からのWorld位置を取る
+      const motionHipsHeight = bvhHips ? bvhHips.position.y : 1; 
+      const vrmHipsHeight = currentVRM.humanoid.normalizedRestPose.hips ? currentVRM.humanoid.normalizedRestPose.hips.position[1] : 1;
+      // BVHはサイズがまちまちなため強制スケール調整
+      const hipsPositionScale = motionHipsHeight > 0.001 ? vrmHipsHeight / motionHipsHeight : 1.0;
+
+      // Map tracking for debugging unmapped bones
+      const mappedBones = new Set();
+      const unmappedBones = new Set();
+
+      clip.tracks.forEach((track) => {
+        const trackSplits = track.name.split('.');
+        if (trackSplits.length < 2) return;
+        const bvhRigName = trackSplits[0];
+        const propertyName = trackSplits[1];
+        
+        let vrmBoneName = bvhVRMRigMap[bvhRigName];
+        
+        // ざっくりとした大文字小文字・アンダーバー無視のフォールバック検索
+        if (!vrmBoneName) {
+           const normalizedName = bvhRigName.toLowerCase().replace(/[^a-z0-9]/g, '');
+           
+           // 1. VRMの標準ボーン名（leftUpperArmなど）と直接一致するかチェック
+           // mixamoマッピングで使われている全VRMボーン名を収集
+           const allVrmBones = Array.from(new Set([
+             ...Object.values(mixamoVRMRigMap), 
+             ...Object.values(bvhVRMRigMap),
+             'upperChest', 'leftEye', 'rightEye'
+           ]));
+           
+           const directMatch = allVrmBones.find(v => v.toLowerCase() === normalizedName);
+           if (directMatch) {
+             vrmBoneName = directMatch;
+           } else {
+             // 2. 辞書側のキーと一致するかチェック
+             const foundKey = Object.keys(bvhVRMRigMap).find(k => k.toLowerCase().replace(/[^a-z0-9]/g, '') === normalizedName);
+             if (foundKey) vrmBoneName = bvhVRMRigMap[foundKey];
+           }
+        }
+
+        const bvhRigNode = skeleton.bones.find(b => b.name === bvhRigName);
+        
+        if (vrmBoneName && bvhRigNode) {
+          mappedBones.add(bvhRigName + "->" + vrmBoneName);
+          const vrmNodeName = currentVRM.humanoid.getNormalizedBoneNode(vrmBoneName)?.name;
+          if (vrmNodeName) {
+            
+            // 初期レストポーズ（ワールド回転）を保存
+            bvhRigNode.getWorldQuaternion(restRotationInverse).invert();
+            if (bvhRigNode.parent && bvhRigNode.parent.isBone) {
+              bvhRigNode.parent.getWorldQuaternion(parentRestWorldRotation);
+            } else {
+              parentRestWorldRotation.identity();
+            }
+
+            if (track instanceof THREE.QuaternionKeyframeTrack) {
+              for (let i = 0; i < track.values.length; i += 4) {
+                const flatQuaternion = track.values.slice(i, i + 4);
+                _quatA.fromArray(flatQuaternion);
+                
+                // 親のレスト時ワールド回転 * トラックの回転 * 自己レスト時ワールド回転の逆
+                _quatA.premultiply(parentRestWorldRotation).multiply(restRotationInverse);
+                _quatA.toArray(flatQuaternion);
+
+                flatQuaternion.forEach((v, index) => {
+                  track.values[index + i] = v;
+                });
+              }
+
+              tracks.push(
+                new THREE.QuaternionKeyframeTrack(
+                  `${vrmNodeName}.${propertyName}`,
+                  track.times,
+                  track.values.map((v, i) => (i % 2 === 0 ? -v : v))
+                )
+              );
+            } else if (track instanceof THREE.VectorKeyframeTrack && propertyName === 'position') {
+              const isInPlace = document.getElementById('anim-inplace').checked;
+              const value = track.values.map((v, i) => {
+                const axis = i % 3;
+                if (isInPlace && (axis === 0 || axis === 2)) {
+                  return 0; // X,Zを無効化
+                }
+                return (axis !== 1 ? -v : v) * hipsPositionScale;
+              });
+              tracks.push(new THREE.VectorKeyframeTrack(`${vrmNodeName}.${propertyName}`, track.times, value));
+            }
+          }
+        } else {
+          // Record unmapped tracked bone names to help debugging
+          if (!unmappedBones.has(bvhRigName)) {
+            unmappedBones.add(bvhRigName);
+          }
+        }
+      });
+      
+      console.log("Mapped BVH Bones:", Array.from(mappedBones));
+      if (unmappedBones.size > 0) {
+        console.warn("Unmapped BVH Bones (Did not match VRM structure):", Array.from(unmappedBones));
+      }
+
+      const retargetedClip = new THREE.AnimationClip('vrmAnimationBvh', clip.duration, tracks);
+      
+      if (currentMixer) {
+        currentMixer.stopAllAction();
+      }
+      currentMixer = new THREE.AnimationMixer(currentVRM.scene);
+      
+      currentMixer.addEventListener('loop', () => {
+        if (currentVRM && currentVRM.springBoneManager) {
+          currentVRM.springBoneManager.reset();
+        }
+      });
+
+      const action = currentMixer.clipAction(retargetedClip);
+      action.play();
+      if (onComplete) onComplete();
+    } else {
+      alert("No valid BVH motion found.");
+    }
+    document.getElementById('loading').classList.add('hidden');
+  }, undefined, (err) => {
+    console.error(err);
+    alert('Failed to load BVH Motion');
+    document.getElementById('loading').classList.add('hidden');
+    if (onComplete) onComplete();
+  });
+}
