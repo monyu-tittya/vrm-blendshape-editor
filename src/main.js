@@ -912,6 +912,17 @@ document.getElementById('stage-upload').addEventListener('change', (e) => {
     }
 
     currentStage = stageObject;
+    
+    // ライトの情報を保持しつつデフォルトを暗くする
+    currentStage.traverse((child) => {
+      if (child.isLight) {
+        // FBX経由のライトは強度が1000等の異常値になりがちなため元値を記憶
+        child.userData.originalIntensity = child.intensity;
+        // デフォルトでスライダー値(5)に基づき0.05倍に減衰
+        child.intensity = child.userData.originalIntensity * 0.05; 
+      }
+    });
+
     scene.add(currentStage);
     
     // スライダーのリセット
@@ -919,6 +930,8 @@ document.getElementById('stage-upload').addEventListener('change', (e) => {
     document.getElementById('stage-scale-val').textContent = 100;
     document.getElementById('stage-y').value = 0;
     document.getElementById('stage-y-val').textContent = "0.00";
+    document.getElementById('stage-light').value = 5;
+    document.getElementById('stage-light-val').textContent = "1.0";
     currentStage.scale.set(1, 1, 1);
     currentStage.position.set(0, 0, 0);
 
@@ -961,5 +974,21 @@ document.getElementById('stage-y').addEventListener('input', (e) => {
   document.getElementById('stage-y-val').textContent = yOffset.toFixed(2);
   if (currentStage) {
     currentStage.position.y = yOffset;
+  }
+});
+
+document.getElementById('stage-light').addEventListener('input', (e) => {
+  // slider: 0 ~ 100. (5 = 1.0x default modifier, 100 = 20.0x modifier)
+  const val = Number(e.target.value);
+  const displayMultiplier = (val / 5).toFixed(1);
+  document.getElementById('stage-light-val').textContent = displayMultiplier;
+  
+  if (currentStage) {
+    const intensityMultiplier = val * 0.01; // val=5 -> 0.05
+    currentStage.traverse(child => {
+      if (child.isLight && child.userData.originalIntensity !== undefined) {
+        child.intensity = child.userData.originalIntensity * intensityMultiplier;
+      }
+    });
   }
 });
