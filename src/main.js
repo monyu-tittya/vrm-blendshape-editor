@@ -14,6 +14,11 @@ let currentPresetName = '';
 let currentPresetIndex = 0;
 let previewAmount = 100;
 let currentMixer = null;
+let blinkWeight = 0;
+let nextBlinkTime = 0;
+let talkWeights = { A: 0, I: 0, U: 0, E: 0, O: 0 };
+let nextTalkSwitchTime = 0;
+let currentTalkTarget = 'A';
 
 // Mapping: glTF mesh index -> array of Three.js SkinnedMesh objects found in the scene
 let sceneMeshMap = {};
@@ -48,7 +53,14 @@ function animate() {
   }
   
   if (currentVRM) {
-    currentVRM.update(delta); // SpringBones等の物理演算を更新
+    updateAutoBlink(delta);
+    updateAutoTalk(delta);
+    
+    // 視線追従の設定
+    const isLookAtCamera = document.getElementById('look-at-camera').checked;
+    currentVRM.lookAt.target = isLookAtCamera ? camera : null;
+
+    currentVRM.update(delta); // SpringBones / LookAt 等の物理演算を更新
     applyPreview(); // 表情のエディタ用の強制的上書き
   }
 
@@ -279,10 +291,129 @@ function applyPreview() {
       meshArray.forEach(mesh => {
         if (mesh.morphTargetInfluences && bind.index < mesh.morphTargetInfluences.length) {
           // VRM 0.x weight is 0-100
-          mesh.morphTargetInfluences[bind.index] = (bind.weight / 100) * previewRatio;
+          mesh.morphTargetInfluences[bind.index] += (bind.weight / 100) * previewRatio;
         }
       });
     }
+  });
+
+  // Apply Auto Blink if enabled
+  const isAutoBlink = document.getElementById('auto-blink').checked;
+  if (isAutoBlink && blinkWeight > 0) {
+    const blinkGroup = blendShapeGroups.find(g => g.presetName === 'Blink' || g.name?.toUpperCase() === 'BLINK');
+    if (blinkGroup && blinkGroup.binds) {
+      blinkGroup.binds.forEach(bind => {
+        const meshArray = sceneMeshMap[bind.mesh];
+        if (meshArray) {
+          meshArray.forEach(mesh => {
+            if (mesh.morphTargetInfluences && bind.index < mesh.morphTargetInfluences.length) {
+              const currentInf = mesh.morphTargetInfluences[bind.index];
+              // まばたきを上から重ねる（最大1.0でクランプ）
+              mesh.morphTargetInfluences[bind.index] = Math.min(1.0, currentInf + blinkWeight);
+            }
+          });
+        }
+      });
+    }
+  }
+
+  // Apply Auto Talk if enabled
+  const isAutoTalk = document.getElementById('auto-talk').checked;
+  if (isAutoTalk) {
+    ['A', 'I', 'U', 'E', 'O'].forEach(vowel => {
+      const weight = talkWeights[vowel];
+      if (weight > 0) {
+        const talkGroup = blendShapeGroups.find(g => g.presetName === vowel || g.name?.toUpperCase() === vowel);
+        if (talkGroup && talkGroup.binds) {
+          talkGroup.binds.forEach(bind => {
+            const meshArray = sceneMeshMap[bind.mesh];
+            if (meshArray) {
+              meshArray.forEach(mesh => {
+                if (mesh.morphTargetInfluences && bind.index < mesh.morphTargetInfluences.length) {
+                  const currentInf = mesh.morphTargetInfluences[bind.index];
+                  mesh.morphTargetInfluences[bind.index] = Math.min(1.0, currentInf + weight);
+                }
+              });
+            }
+          });
+        }
+      }
+    });
+  }
+
+  // Apply LookAt Expressions (for Expression-based LookAt models)
+  // vrm.update() で計算された視線ウェイトを救出する
+  const lookAtExps = ['lookUp', 'lookDown', 'lookLeft', 'lookRight'];
+  lookAtExps.forEach(expName => {
+    const weight = currentVRM.expressionManager.getValue(expName);
+    if (weight > 0) {
+      const talkGroup = blendShapeGroups.find(g => g.presetName === expName || (g.name && g.name.toLowerCase() === expName.toLowerCase()));
+      if (talkGroup && talkGroup.binds) {
+        talkGroup.binds.forEach(bind => {
+          const meshArray = sceneMeshMap[bind.mesh];
+          if (meshArray) {
+            meshArray.forEach(mesh => {
+              if (mesh.morphTargetInfluences && bind.index < mesh.morphTargetInfluences.length) {
+                const currentInf = mesh.morphTargetInfluences[bind.index];
+                mesh.morphTargetInfluences[bind.index] = Math.min(1.0, currentInf + weight);
+              }
+            });
+          }
+        });
+      }
+    }
+  });
+}
+
+function updateAutoBlink(delta) {
+  const isAutoBlink = document.getElementById('auto-blink').checked;
+  if (!isAutoBlink) {
+    blinkWeight = 0;
+    return;
+  }
+
+  const now = performance.now() / 1000;
+  if (now > nextBlinkTime) {
+    // まばたき開始
+    const blinkDuration = 0.2; // 全体で0.2秒
+    const elapsed = now - nextBlinkTime;
+    
+    if (elapsed < blinkDuration) {
+      // 三角波でまばたきを表現 (0 -> 1 -> 0)
+      blinkWeight = Math.sin((elapsed / blinkDuration) * Math.PI);
+    } else {
+      // まばたき終了。次の時間をセット (2〜6秒後)
+      blinkWeight = 0;
+      nextBlinkTime = now + 2 + Math.random() * 4;
+    }
+  }
+}
+
+function updateAutoTalk(delta) {
+  const isAutoTalk = document.getElementById('auto-talk').checked;
+  if (!isAutoTalk) {
+    Object.keys(talkWeights).forEach(k => talkWeights[k] = 0);
+    return;
+  }
+
+  const now = performance.now() / 1000;
+  
+  if (now > nextTalkSwitchTime) {
+    // 次の母音へ切り替え
+    const vowels = ['A', 'I', 'U', 'E', 'O'];
+    // 少し口を閉じる瞬間を入れるために、たまに空（無音）を混ぜる
+    const nextOptions = [...vowels, null, null];
+    const picked = nextOptions[Math.floor(Math.random() * nextOptions.length)];
+    
+    currentTalkTarget = picked;
+    nextTalkSwitchTime = now + 0.1 + Math.random() * 0.2; // 0.1s - 0.3s ごとに切り替え
+  }
+
+  // なめらかに遷移
+  const vowels = ['A', 'I', 'U', 'E', 'O'];
+  vowels.forEach(v => {
+    const target = (v === currentTalkTarget) ? 0.8 : 0; // 最大強度を少し抑えて0.8
+    talkWeights[v] += (target - talkWeights[v]) * Math.min(1.0, delta * 15); // 線形補間
   });
 }
 
@@ -336,7 +467,38 @@ const mixamoVRMRigMap = {
   mixamorigRightUpLeg: 'rightUpperLeg',
   mixamorigRightLeg: 'rightLowerLeg',
   mixamorigRightFoot: 'rightFoot',
-  mixamorigRightToeBase: 'rightToes'
+  mixamorigRightToeBase: 'rightToes',
+  // Fingers
+  mixamorigLeftHandThumb1: 'leftThumbProximal',
+  mixamorigLeftHandThumb2: 'leftThumbIntermediate',
+  mixamorigLeftHandThumb3: 'leftThumbDistal',
+  mixamorigLeftHandIndex1: 'leftIndexProximal',
+  mixamorigLeftHandIndex2: 'leftIndexIntermediate',
+  mixamorigLeftHandIndex3: 'leftIndexDistal',
+  mixamorigLeftHandMiddle1: 'leftMiddleProximal',
+  mixamorigLeftHandMiddle2: 'leftMiddleIntermediate',
+  mixamorigLeftHandMiddle3: 'leftMiddleDistal',
+  mixamorigLeftHandRing1: 'leftRingProximal',
+  mixamorigLeftHandRing2: 'leftRingIntermediate',
+  mixamorigLeftHandRing3: 'leftRingDistal',
+  mixamorigLeftHandPinky1: 'leftLittleProximal',
+  mixamorigLeftHandPinky2: 'leftLittleIntermediate',
+  mixamorigLeftHandPinky3: 'leftLittleDistal',
+  mixamorigRightHandThumb1: 'rightThumbProximal',
+  mixamorigRightHandThumb2: 'rightThumbIntermediate',
+  mixamorigRightHandThumb3: 'rightThumbDistal',
+  mixamorigRightHandIndex1: 'rightIndexProximal',
+  mixamorigRightHandIndex2: 'rightIndexIntermediate',
+  mixamorigRightHandIndex3: 'rightIndexDistal',
+  mixamorigRightHandMiddle1: 'rightMiddleProximal',
+  mixamorigRightHandMiddle2: 'rightMiddleIntermediate',
+  mixamorigRightHandMiddle3: 'rightMiddleDistal',
+  mixamorigRightHandRing1: 'rightRingProximal',
+  mixamorigRightHandRing2: 'rightRingIntermediate',
+  mixamorigRightHandRing3: 'rightRingDistal',
+  mixamorigRightHandPinky1: 'rightLittleProximal',
+  mixamorigRightHandPinky2: 'rightLittleIntermediate',
+  mixamorigRightHandPinky3: 'rightLittleDistal'
 };
 
 document.getElementById('fbx-upload').addEventListener('change', (e) => {
@@ -345,9 +507,17 @@ document.getElementById('fbx-upload').addEventListener('change', (e) => {
     alert("Please load a VRM file first.");
     return;
   }
+  const url = URL.createObjectURL(file);
+  loadFbxFromUrl(url, () => URL.revokeObjectURL(url));
+});
+
+function loadFbxFromUrl(url, onComplete) {
+  if (!currentVRM) {
+    alert("Please load a VRM file first.");
+    return;
+  }
   document.getElementById('loading').classList.remove('hidden');
 
-  const url = URL.createObjectURL(file);
   const loader = new FBXLoader();
   loader.load(url, (fbx) => {
     // 最初の有効なアニメーションを探す（通常 .animations[0] が mixamo.com ）
@@ -404,7 +574,14 @@ document.getElementById('fbx-upload').addEventListener('change', (e) => {
               );
             } else if (track instanceof THREE.VectorKeyframeTrack && propertyName === 'position') {
               // 位置の変換（Hips用）VRM 0.x向けに XとZを反転
-              const value = track.values.map((v, i) => (i % 3 !== 1 ? -v : v) * hipsPositionScale);
+              const isInPlace = document.getElementById('anim-inplace').checked;
+              const value = track.values.map((v, i) => {
+                const axis = i % 3;
+                if (isInPlace && (axis === 0 || axis === 2)) {
+                  return 0; // XとZの移動を無効化
+                }
+                return (axis !== 1 ? -v : v) * hipsPositionScale;
+              });
               tracks.push(new THREE.VectorKeyframeTrack(`${vrmNodeName}.${propertyName}`, track.times, value));
             }
           }
@@ -417,16 +594,51 @@ document.getElementById('fbx-upload').addEventListener('change', (e) => {
         currentMixer.stopAllAction();
       }
       currentMixer = new THREE.AnimationMixer(currentVRM.scene);
+      
+      // ループ時にSpringBoneをリセットして「跳ねる」現象を防止
+      currentMixer.addEventListener('loop', () => {
+        if (currentVRM && currentVRM.springBoneManager) {
+          currentVRM.springBoneManager.reset();
+        }
+      });
+
       const action = currentMixer.clipAction(retargetedClip);
       action.play();
+      if (onComplete) onComplete();
     } else {
       alert("No animations found in the FBX file.");
     }
     document.getElementById('loading').classList.add('hidden');
-    URL.revokeObjectURL(url);
   }, undefined, (err) => {
     console.error(err);
     alert('Failed to load FBX Animation');
     document.getElementById('loading').classList.add('hidden');
+    if (onComplete) onComplete();
+  });
+}
+
+// Preset animation auto-loading using Vite import.meta.glob
+const presetAnimations = import.meta.glob('../animation/*.fbx', { query: '?url', import: 'default', eager: true });
+const animSelect = document.getElementById('preset-anim-select');
+
+// Build UI options
+Object.keys(presetAnimations).forEach(path => {
+  const filename = path.split('/').pop().replace('.fbx', '');
+  const option = document.createElement('option');
+  option.value = presetAnimations[path];
+  option.textContent = filename;
+  animSelect.appendChild(option);
+});
+
+// Dropdown change listener
+animSelect.addEventListener('change', (e) => {
+  const url = e.target.value;
+  if (!url) return;
+  
+  // reset file input
+  document.getElementById('fbx-upload').value = '';
+  
+  loadFbxFromUrl(url, () => {
+    // Keep selection
   });
 });

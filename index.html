@@ -15,8 +15,31 @@
           <div class="file-action">
             <label for="vrm-upload" class="btn primary">Load VRM</label>
             <input type="file" id="vrm-upload" accept=".vrm" style="display:none;" />
-            <label for="fbx-upload" class="btn">Load FBX</label>
-            <input type="file" id="fbx-upload" accept=".fbx" style="display:none;" />
+            <div style="display: flex; gap: 10px;">
+              <select id="preset-anim-select" class="btn">
+                <option value="">-- Preset Anim --</option>
+              </select>
+              <label for="fbx-upload" class="btn">Load FBX</label>
+              <input type="file" id="fbx-upload" accept=".fbx" style="display:none;" />
+            </div>
+            <div class="checkbox-group">
+              <div class="checkbox-wrapper">
+                <input type="checkbox" id="anim-inplace" checked>
+                <label for="anim-inplace">In-place</label>
+              </div>
+              <div class="checkbox-wrapper">
+                <input type="checkbox" id="auto-blink" checked>
+                <label for="auto-blink">Auto Blink</label>
+              </div>
+              <div class="checkbox-wrapper">
+                <input type="checkbox" id="auto-talk">
+                <label for="auto-talk">Auto Talk</label>
+              </div>
+              <div class="checkbox-wrapper">
+                <input type="checkbox" id="look-at-camera">
+                <label for="look-at-camera">Look At Camera</label>
+              </div>
+            </div>
             <button id="vrm-download" class="btn" disabled>Export VRM</button>
           </div>
         </header>
