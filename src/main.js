@@ -704,36 +704,144 @@ function loadFbxFromUrl(url, onComplete) {
 }
 
 // Preset animation auto-loading using Vite import.meta.glob
-const presetAnimations = import.meta.glob('../animation/*.fbx', { query: '?url', import: 'default', eager: true });
+// 拡張子.fbx, .bvh を対象に glob できるように修正 (任意)
+const presetAnimations = import.meta.glob(['../animation/*.fbx', '../animation/*.bvh'], { query: '?url', import: 'default', eager: true });
 const animSelect = document.getElementById('preset-anim-select');
 
-// Build UI options
+// Build UI options for Vite presets
 Object.keys(presetAnimations).forEach(path => {
-  const filename = path.split('/').pop().replace('.fbx', '');
+  const filename = path.split('/').pop().replace(/\.(fbx|bvh)$/i, '');
   const option = document.createElement('option');
   option.value = presetAnimations[path];
   option.textContent = filename;
   animSelect.appendChild(option);
 });
 
+// --- IndexedDB Local Library ---
+function openDB() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open("VRMToolDB", 1);
+    req.onupgradeneeded = e => {
+      const db = e.target.result;
+      if (!db.objectStoreNames.contains("animations")) {
+        db.createObjectStore("animations", { keyPath: "name" });
+      }
+    };
+    req.onsuccess = e => resolve(e.target.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+async function saveAnimToDB(file) {
+  try {
+    const db = await openDB();
+    const tx = db.transaction("animations", "readwrite");
+    const store = tx.objectStore("animations");
+    const ext = file.name.split('.').pop().toLowerCase();
+    store.put({ name: file.name, file: file, ext: ext });
+    
+    // Add to UI if not existing
+    const existingOption = Array.from(animSelect.options).find(opt => opt.value === `db://${file.name}`);
+    if (!existingOption) {
+      const option = document.createElement('option');
+      option.value = `db://${file.name}`;
+      option.textContent = `[Saved] ${file.name}`;
+      animSelect.appendChild(option);
+      // Select the newly added item
+      animSelect.value = option.value;
+    }
+  } catch (err) {
+    console.warn("Failed to save to IndexedDB:", err);
+  }
+}
+
+async function loadSavedAnimsToUI() {
+  try {
+    const db = await openDB();
+    const tx = db.transaction("animations", "readonly");
+    const store = tx.objectStore("animations");
+    const req = store.getAll();
+    req.onsuccess = () => {
+      req.result.forEach(item => {
+        const option = document.createElement('option');
+        option.value = `db://${item.name}`;
+        option.textContent = `[Saved] ${item.name}`;
+        animSelect.appendChild(option);
+      });
+    };
+  } catch (err) {
+    console.warn("Failed to load IndexedDB items:", err);
+  }
+}
+
+async function getAnimFromDB(name) {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction("animations", "readonly");
+    const req = tx.objectStore("animations").get(name);
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+// Call init IDB on page load
+loadSavedAnimsToUI();
+
 // Dropdown change listener
-animSelect.addEventListener('change', (e) => {
-  const url = e.target.value;
-  if (!url) return;
+animSelect.addEventListener('change', async (e) => {
+  const value = e.target.value;
+  if (!value) return;
   
   // reset file input
   document.getElementById('fbx-upload').value = '';
   document.getElementById('bvh-upload').value = '';
   
-  loadFbxFromUrl(url);
+  if (value.startsWith('db://')) {
+    const filename = value.replace('db://', '');
+    const data = await getAnimFromDB(filename);
+    if (data && data.file) {
+      const url = URL.createObjectURL(data.file);
+      if (data.ext === 'bvh') {
+        loadBvhFromUrl(url, () => URL.revokeObjectURL(url));
+      } else {
+        loadFbxFromUrl(url, () => URL.revokeObjectURL(url));
+      }
+    } else {
+      alert("Saved file not found.");
+    }
+  } else {
+    // Vite preset
+    const ext = value.split('.').pop().split('?')[0].toLowerCase();
+    if (ext === 'bvh') {
+       loadBvhFromUrl(value);
+    } else {
+       loadFbxFromUrl(value);
+    }
+  }
 });
 
-document.getElementById('bvh-upload').addEventListener('change', (e) => {
+document.getElementById('fbx-upload').addEventListener('change', async (e) => {
   const file = e.target.files[0];
   if (!file || !currentVRM) {
     alert("Please load a VRM file first.");
     return;
   }
+  
+  await saveAnimToDB(file);
+  
+  const url = URL.createObjectURL(file);
+  loadFbxFromUrl(url, () => URL.revokeObjectURL(url));
+});
+
+document.getElementById('bvh-upload').addEventListener('change', async (e) => {
+  const file = e.target.files[0];
+  if (!file || !currentVRM) {
+    alert("Please load a VRM file first.");
+    return;
+  }
+
+  await saveAnimToDB(file);
+
   const url = URL.createObjectURL(file);
   loadBvhFromUrl(url, () => URL.revokeObjectURL(url));
 });
