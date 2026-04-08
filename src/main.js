@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+import { FBXLoader } from 'three/examples/jsm/loaders/FBXLoader.js';
 import { VRMLoaderPlugin } from '@pixiv/three-vrm';
 import { GLBEditor } from './glbParser.js';
 
@@ -12,6 +13,7 @@ let meshesWithTargets = [];
 let currentPresetName = '';
 let currentPresetIndex = 0;
 let previewAmount = 100;
+let currentMixer = null;
 
 // Mapping: glTF mesh index -> array of Three.js SkinnedMesh objects found in the scene
 let sceneMeshMap = {};
@@ -39,9 +41,17 @@ const clock = new THREE.Clock();
 
 function animate() {
   requestAnimationFrame(animate);
-  clock.getDelta();
-  // NOTE: We intentionally do NOT call currentVRM.update() here
-  // because the VRM ExpressionManager would overwrite our manual morph target values.
+  const delta = clock.getDelta();
+  
+  if (currentMixer) {
+    currentMixer.update(delta);
+  }
+  
+  if (currentVRM) {
+    currentVRM.update(delta); // SpringBones等の物理演算を更新
+    applyPreview(); // 表情のエディタ用の強制的上書き
+  }
+
   renderer.render(scene, camera);
 }
 animate();
@@ -301,4 +311,86 @@ document.getElementById('vrm-download').addEventListener('click', () => {
     }
     document.getElementById('loading').classList.add('hidden');
   }, 100);
+});
+
+// Mixamo -> VRM 骨格マッピング (T-Poseを前提)
+const mixamoVRMRigMap = {
+  mixamorigHips: 'hips',
+  mixamorigSpine: 'spine',
+  mixamorigSpine1: 'chest',
+  mixamorigSpine2: 'upperChest',
+  mixamorigNeck: 'neck',
+  mixamorigHead: 'head',
+  mixamorigLeftShoulder: 'leftShoulder',
+  mixamorigLeftArm: 'leftUpperArm',
+  mixamorigLeftForeArm: 'leftLowerArm',
+  mixamorigLeftHand: 'leftHand',
+  mixamorigRightShoulder: 'rightShoulder',
+  mixamorigRightArm: 'rightUpperArm',
+  mixamorigRightForeArm: 'rightLowerArm',
+  mixamorigRightHand: 'rightHand',
+  mixamorigLeftUpLeg: 'leftUpperLeg',
+  mixamorigLeftLeg: 'leftLowerLeg',
+  mixamorigLeftFoot: 'leftFoot',
+  mixamorigLeftToeBase: 'leftToes',
+  mixamorigRightUpLeg: 'rightUpperLeg',
+  mixamorigRightLeg: 'rightLowerLeg',
+  mixamorigRightFoot: 'rightFoot',
+  mixamorigRightToeBase: 'rightToes'
+};
+
+document.getElementById('fbx-upload').addEventListener('change', (e) => {
+  const file = e.target.files[0];
+  if (!file || !currentVRM) {
+    alert("Please load a VRM file first.");
+    return;
+  }
+  document.getElementById('loading').classList.remove('hidden');
+
+  const url = URL.createObjectURL(file);
+  const loader = new FBXLoader();
+  loader.load(url, (fbx) => {
+    if (fbx.animations && fbx.animations.length > 0) {
+      const clip = fbx.animations[0];
+      const tracks = [];
+
+      clip.tracks.forEach((track) => {
+        const trackSplits = track.name.split('.');
+        const mixamoRigName = trackSplits[0];
+        const vrmBoneName = mixamoVRMRigMap[mixamoRigName];
+        
+        if (vrmBoneName) {
+          const vrmNode = currentVRM.humanoid.getNormalizedBoneNode(vrmBoneName);
+          if (vrmNode) {
+            const trackName = vrmNode.name + '.' + trackSplits[1];
+            // Position: MixamoのPositionは通常hipsにのみ適用
+            if (trackSplits[1] === 'position' && vrmBoneName === 'hips') {
+              // 縮尺調整 (通常Mixamo FBXは1/100にスケールダウンしてVRMのメートル単位に合わせる)
+              const values = track.values.map(v => v * 0.01);
+              tracks.push(new THREE.VectorKeyframeTrack(trackName, track.times, values));
+            } else if (trackSplits[1] === 'quaternion') {
+              tracks.push(new THREE.QuaternionKeyframeTrack(trackName, track.times, track.values));
+            }
+          }
+        }
+      });
+
+      const retargetedClip = new THREE.AnimationClip(clip.name, clip.duration, tracks);
+      
+      if (currentMixer) {
+        currentMixer.stopAllAction();
+      }
+      currentMixer = new THREE.AnimationMixer(currentVRM.scene);
+      const action = currentMixer.clipAction(retargetedClip);
+      action.play();
+    } else {
+      alert("No animations found in the FBX file.");
+    }
+    document.getElementById('loading').classList.add('hidden');
+    URL.revokeObjectURL(url);
+  }, undefined, (err) => {
+    console.error(err);
+    alert('Failed to load FBX Animation');
+    document.getElementById('loading').classList.add('hidden');
+  });
 });
