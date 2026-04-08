@@ -6,7 +6,6 @@ import { GLBEditor } from './glbParser.js';
 
 let currentVRM = null;
 let currentGLTF = null;
-let gltfParser = null;
 let glbEditor = null;
 let blendShapeGroups = [];
 let meshesWithTargets = [];
@@ -14,8 +13,8 @@ let currentPresetName = '';
 let currentPresetIndex = 0;
 let previewAmount = 100;
 
-// Mapping array: index -> Three.js Mesh object
-let meshIndexToThreeMesh = {};
+// Mapping: glTF mesh index -> array of Three.js SkinnedMesh objects found in the scene
+let sceneMeshMap = {};
 
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(30, window.innerWidth / window.innerHeight, 0.1, 20.0);
@@ -40,10 +39,9 @@ const clock = new THREE.Clock();
 
 function animate() {
   requestAnimationFrame(animate);
-  const deltaTime = clock.getDelta();
-  if (currentVRM) {
-    currentVRM.update(deltaTime);
-  }
+  clock.getDelta();
+  // NOTE: We intentionally do NOT call currentVRM.update() here
+  // because the VRM ExpressionManager would overwrite our manual morph target values.
   renderer.render(scene, camera);
 }
 animate();
@@ -71,7 +69,6 @@ document.getElementById('vrm-upload').addEventListener('change', (e) => {
 
       const loader = new GLTFLoader();
       loader.register((parser) => {
-        gltfParser = parser;
         return new VRMLoaderPlugin(parser);
       });
 
@@ -86,30 +83,33 @@ document.getElementById('vrm-upload').addEventListener('change', (e) => {
         scene.add(currentVRM.scene);
         currentVRM.scene.rotation.y = Math.PI; // Face the camera
 
-        // Disable automatic VRM 0.x expression blinking if any
-        if (currentVRM.expressionManager && currentVRM.expressionManager.blink) {
-          currentVRM.expressionManager.blink.update = () => {};
-        }
-
-        console.log("=== Debug Info ===");
-        console.log("Raw GLTF JSON Extensions:", currentGLTF.parser.json.extensions);
         blendShapeGroups = glbEditor.getBlendShapeGroups();
-        console.log("BlendShape Groups extracted:", blendShapeGroups);
-
         meshesWithTargets = glbEditor.getMeshesWithMorphTargets();
 
-        if (blendShapeGroups.length === 1) {
-            alert(`BlendShapeGroupが1つしか見つかりませんでした。コンソール(F12)にてVRMタグの内容を確認してください。\n検出された拡張: ${JSON.stringify(Object.keys(currentGLTF.parser.json.extensions || {}))}`);
-        }
-        
-        // Resolve Three.js meshes
-        meshIndexToThreeMesh = {};
+        console.log("=== Debug Info ===");
+        console.log("BlendShape Groups:", blendShapeGroups);
+        console.log("Meshes with morph targets:", meshesWithTargets);
+
+        // Build sceneMeshMap perfectly by asking GLTFLoader parser for the exact mesh index
+        sceneMeshMap = {};
         for (const meta of meshesWithTargets) {
-          const meshObj = await gltfParser.getDependency('mesh', meta.index);
-          // meshObj might be a Group if there are multiple primitives. 
-          // Bind targets in VRM apply to the primitives that have targets.
-          // For simplicity we store the meshObj and handle groups in `applyPreview`
-          meshIndexToThreeMesh[meta.index] = meshObj;
+          sceneMeshMap[meta.index] = [];
+          try {
+            const obj = await currentGLTF.parser.getDependency('mesh', meta.index);
+            if (obj) {
+              if (obj.isGroup) {
+                obj.traverse(child => {
+                  if ((child.isMesh || child.isSkinnedMesh) && child.morphTargetInfluences) {
+                    sceneMeshMap[meta.index].push(child);
+                  }
+                });
+              } else if ((obj.isMesh || obj.isSkinnedMesh) && obj.morphTargetInfluences) {
+                sceneMeshMap[meta.index].push(obj);
+              }
+            }
+          } catch(e) {
+            console.warn(`Could not get mesh index ${meta.index} from parser`, e);
+          }
         }
 
         document.getElementById('vrm-download').disabled = false;
@@ -125,7 +125,7 @@ document.getElementById('vrm-upload').addEventListener('change', (e) => {
 
     } catch (err) {
       console.error(err);
-      alert("Error loading VRM");
+      alert("Error loading VRM: " + err.message);
       document.getElementById('loading').classList.add('hidden');
     }
   };
@@ -138,7 +138,7 @@ function renderTabs() {
   blendShapeGroups.forEach((group, index) => {
     const tab = document.createElement('div');
     tab.className = `tab ${index === currentPresetIndex ? 'active' : ''}`;
-    tab.textContent = group.presetName || group.name;
+    tab.textContent = group.name || group.presetName;
     tab.onclick = () => selectPreset(index);
     tabsContainer.appendChild(tab);
   });
@@ -147,7 +147,7 @@ function renderTabs() {
 function selectPreset(index) {
   currentPresetIndex = index;
   const group = blendShapeGroups[index];
-  currentPresetName = group.presetName || group.name;
+  currentPresetName = group.name || group.presetName;
   
   document.getElementById('current-preset-name').textContent = `Preset: ${currentPresetName}`;
   Array.from(document.getElementById('preset-tabs').children).forEach((tab, i) => {
@@ -246,12 +246,12 @@ document.getElementById('preview-amount').addEventListener('input', (e) => {
 function applyPreview() {
   if (!currentVRM || blendShapeGroups.length === 0) return;
 
-  // Clear all morph targets first
-  Object.values(meshIndexToThreeMesh).forEach(obj => {
-    obj.traverse((child) => {
-      if (child.isMesh && child.morphTargetInfluences) {
-        for (let i = 0; i < child.morphTargetInfluences.length; i++) {
-          child.morphTargetInfluences[i] = 0;
+  // Clear all morph targets on all mapped scene meshes
+  Object.values(sceneMeshMap).forEach(meshArray => {
+    meshArray.forEach(mesh => {
+      if (mesh.morphTargetInfluences) {
+        for (let i = 0; i < mesh.morphTargetInfluences.length; i++) {
+          mesh.morphTargetInfluences[i] = 0;
         }
       }
     });
@@ -264,13 +264,12 @@ function applyPreview() {
   const previewRatio = previewAmount / 100;
 
   group.binds.forEach(bind => {
-    const obj = meshIndexToThreeMesh[bind.mesh];
-    if (obj) {
-      obj.traverse((child) => {
-        if (child.isMesh && child.morphTargetInfluences && bind.index < child.morphTargetInfluences.length) {
-          // Weight in VRM 0.0 is 0-100 or 0-1 depending on some exporters, but usually 0-100.
-          // Vroid Studio uses 0-100.
-          child.morphTargetInfluences[bind.index] = (bind.weight / 100) * previewRatio;
+    const meshArray = sceneMeshMap[bind.mesh];
+    if (meshArray) {
+      meshArray.forEach(mesh => {
+        if (mesh.morphTargetInfluences && bind.index < mesh.morphTargetInfluences.length) {
+          // VRM 0.x weight is 0-100
+          mesh.morphTargetInfluences[bind.index] = (bind.weight / 100) * previewRatio;
         }
       });
     }
