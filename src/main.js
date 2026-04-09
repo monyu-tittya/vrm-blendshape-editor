@@ -50,20 +50,28 @@ function animate() {
   requestAnimationFrame(animate);
   const delta = clock.getDelta();
   
-  if (currentMixer) {
-    currentMixer.update(delta);
+  try {
+    if (currentMixer) {
+      currentMixer.update(delta);
+    }
+  } catch (e) {
+    console.error("Animation format error:", e);
+    currentMixer = null;
   }
   
-  if (currentVRM) {
-    updateAutoBlink(delta);
-    updateAutoTalk(delta);
-    
-    // 視線追従の設定
-    const isLookAtCamera = document.getElementById('look-at-camera').checked;
-    currentVRM.lookAt.target = isLookAtCamera ? camera : null;
+  try {
+    if (currentVRM) {
+      updateAutoBlink(delta);
+      updateAutoTalk(delta);
+      
+      const isLookAtCamera = document.getElementById('look-at-camera').checked;
+      currentVRM.lookAt.target = isLookAtCamera ? camera : null;
 
-    currentVRM.update(delta); // SpringBones / LookAt 等の物理演算を更新
-    applyPreview(); // 表情のエディタ用の強制的上書き
+      currentVRM.update(delta);
+      applyPreview();
+    }
+  } catch (e) {
+    console.warn("VRM update error (skipping frame):", e);
   }
 
   renderer.render(scene, camera);
@@ -100,6 +108,10 @@ document.getElementById('vrm-upload').addEventListener('change', (e) => {
         if (currentVRM) {
           scene.remove(currentVRM.scene);
           currentVRM.dispose();
+          if (currentMixer) {
+            currentMixer.stopAllAction();
+            currentMixer = null; // 安全のためミキサーも同時にリセット
+          }
         }
 
         currentGLTF = gltf;
@@ -784,12 +796,33 @@ async function getAnimFromDB(name) {
   });
 }
 
+async function deleteAnimFromDB(name) {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction("animations", "readwrite");
+    const req = tx.objectStore("animations").delete(name);
+    req.onsuccess = () => resolve();
+    req.onerror = () => reject(req.error);
+  });
+}
+
 // Call init IDB on page load
 loadSavedAnimsToUI();
+
+// UI elements mapping
+const deleteAnimBtn = document.getElementById('delete-anim-btn');
 
 // Dropdown change listener
 animSelect.addEventListener('change', async (e) => {
   const value = e.target.value;
+  
+  // 削除ボタンの表示切り替え（[Saved]のアニメの場合のみ表示）
+  if (value && value.startsWith('db://')) {
+    deleteAnimBtn.style.display = 'inline-block';
+  } else {
+    deleteAnimBtn.style.display = 'none';
+  }
+
   if (!value) return;
   
   // reset file input
@@ -820,10 +853,29 @@ animSelect.addEventListener('change', async (e) => {
   }
 });
 
+// 削除ボタンリスナー
+deleteAnimBtn.addEventListener('click', async () => {
+  const value = animSelect.value;
+  if (value && value.startsWith('db://')) {
+    const filename = value.replace('db://', '');
+    if (confirm(`保存されたアニメーション「${filename}」を削除しますか？`)) {
+      await deleteAnimFromDB(filename);
+      // ドロップダウンから削除
+      const optionToRemove = Array.from(animSelect.options).find(opt => opt.value === value);
+      if (optionToRemove) optionToRemove.remove();
+      
+      // 未選択に戻す
+      animSelect.value = '';
+      deleteAnimBtn.style.display = 'none';
+    }
+  }
+});
+
 document.getElementById('fbx-upload').addEventListener('change', async (e) => {
   const file = e.target.files[0];
   if (!file || !currentVRM) {
-    alert("Please load a VRM file first.");
+    if (!currentVRM) alert("Please load a VRM file first.");
+    e.target.value = ''; // 次も同じファイルを選べるようにリセット
     return;
   }
   
@@ -836,7 +888,8 @@ document.getElementById('fbx-upload').addEventListener('change', async (e) => {
 document.getElementById('bvh-upload').addEventListener('change', async (e) => {
   const file = e.target.files[0];
   if (!file || !currentVRM) {
-    alert("Please load a VRM file first.");
+    if (!currentVRM) alert("Please load a VRM file first.");
+    e.target.value = ''; // 次も同じファイルを選べるようにリセット
     return;
   }
 

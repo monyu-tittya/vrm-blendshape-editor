@@ -16,9 +16,10 @@
             <label for="vrm-upload" class="btn primary">Load VRM</label>
             <input type="file" id="vrm-upload" accept=".vrm" style="display:none;" />
             <div style="display: flex; gap: 10px;">
-              <select id="preset-anim-select" class="btn">
+              <select id="preset-anim-select" class="btn" style="flex: 2;">
                 <option value="">-- Preset Anim --</option>
               </select>
+              <button id="delete-anim-btn" class="btn" style="flex: 0; padding: 0 10px; display: none;" title="Delete Saved Anim">🗑</button>
               <label for="bvh-upload" class="btn">Load BVH</label>
               <input type="file" id="bvh-upload" accept=".bvh" style="display:none;" />
               <label for="fbx-upload" class="btn">Load FBX</label>
