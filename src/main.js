@@ -11,13 +11,17 @@ export const vrmData = [
     vrm: null, mixer: null, gltf: null,
     blinkWeight: 0, nextBlinkTime: 0,
     talkWeights: { A: 0, I: 0, U: 0, E: 0, O: 0 },
-    nextTalkSwitchTime: 0, currentTalkTarget: 'A'
+    nextTalkSwitchTime: 0, currentTalkTarget: 'A',
+    poseApplied: false,
+    basePose: {} // { boneName: { position: Vector3, quaternion: Quaternion } }
   },
   {
     vrm: null, mixer: null, gltf: null,
     blinkWeight: 0, nextBlinkTime: 0,
     talkWeights: { A: 0, I: 0, U: 0, E: 0, O: 0 },
-    nextTalkSwitchTime: 0, currentTalkTarget: 'A'
+    nextTalkSwitchTime: 0, currentTalkTarget: 'A',
+    poseApplied: false,
+    basePose: {}
   }
 ];
 
@@ -50,6 +54,8 @@ function animate() {
   requestAnimationFrame(animate);
   const delta = clock.getDelta();
   
+  const elapsedTime = clock.elapsedTime;
+
   vrmData.forEach((data, index) => {
     try {
       if (data.mixer) data.mixer.update(delta);
@@ -62,6 +68,7 @@ function animate() {
       if (data.vrm) {
         updateAutoBlink(delta, data);
         updateAutoTalk(delta, data);
+        updateBreathing(elapsedTime, data);
         
         // Target 1 or 2's specific settings can be overridden later, 
         // but for now lookAt targets camera globally.
@@ -313,6 +320,128 @@ function updateAutoTalk(delta, data) {
   });
 }
 
+// --- Breathing Animation ---
+function updateBreathing(elapsedTime, data) {
+  const isBreathing = document.getElementById('auto-breathe').checked;
+  if (!isBreathing || !data.vrm) return;
+
+  const intensitySlider = document.getElementById('breathe-intensity');
+  const intensity = intensitySlider ? (Number(intensitySlider.value) / 100) * 0.006 : 0.003;
+  const speed = 2.5;
+
+  const humanoid = data.vrm.humanoid;
+  if (!humanoid) return;
+
+  const spine = humanoid.getNormalizedBoneNode('spine');
+  const chest = humanoid.getNormalizedBoneNode('chest');
+  const upperChest = humanoid.getNormalizedBoneNode('upperChest');
+  const leftShoulder = humanoid.getNormalizedBoneNode('leftShoulder');
+  const rightShoulder = humanoid.getNormalizedBoneNode('rightShoulder');
+
+  const breathVal = Math.sin(elapsedTime * speed);
+
+  if (spine) {
+    // Get or store original rotation
+    if (spine.userData._breathBaseX === undefined) {
+      spine.userData._breathBaseX = spine.rotation.x;
+    }
+    spine.rotation.x = spine.userData._breathBaseX + breathVal * intensity;
+  }
+  if (chest) {
+    if (chest.userData._breathBaseX === undefined) {
+      chest.userData._breathBaseX = chest.rotation.x;
+    }
+    chest.rotation.x = chest.userData._breathBaseX + Math.sin(elapsedTime * speed + 0.4) * intensity * 1.3;
+  }
+  if (upperChest) {
+    if (upperChest.userData._breathBaseX === undefined) {
+      upperChest.userData._breathBaseX = upperChest.rotation.x;
+    }
+    upperChest.rotation.x = upperChest.userData._breathBaseX + Math.sin(elapsedTime * speed + 0.7) * intensity * 0.8;
+  }
+  // Subtle shoulder rise
+  if (leftShoulder) {
+    if (leftShoulder.userData._breathBaseZ === undefined) {
+      leftShoulder.userData._breathBaseZ = leftShoulder.rotation.z;
+    }
+    leftShoulder.rotation.z = leftShoulder.userData._breathBaseZ + breathVal * intensity * 0.3;
+  }
+  if (rightShoulder) {
+    if (rightShoulder.userData._breathBaseZ === undefined) {
+      rightShoulder.userData._breathBaseZ = rightShoulder.rotation.z;
+    }
+    rightShoulder.rotation.z = rightShoulder.userData._breathBaseZ - breathVal * intensity * 0.3;
+  }
+}
+
+// Reset breath base values (call when loading new anim/pose)
+function resetBreathBase(data) {
+  if (!data.vrm || !data.vrm.humanoid) return;
+  const boneNames = ['spine', 'chest', 'upperChest', 'leftShoulder', 'rightShoulder'];
+  boneNames.forEach(name => {
+    const node = data.vrm.humanoid.getNormalizedBoneNode(name);
+    if (node) {
+      delete node.userData._breathBaseX;
+      delete node.userData._breathBaseZ;
+    }
+  });
+}
+
+// --- Apply static pose from FBX (no animation) ---
+function applyStaticPoseFromFBX(fbx, data) {
+  const restRotationInverse = new THREE.Quaternion();
+  const parentRestWorldRotation = new THREE.Quaternion();
+  const _quatA = new THREE.Quaternion();
+
+  // Reset breath bases since we're applying a new pose
+  resetBreathBase(data);
+  data.poseApplied = true;
+
+  fbx.updateWorldMatrix(true, true);
+
+  Object.entries(mixamoVRMRigMap).forEach(([mixamoName, vrmBoneName]) => {
+    const mixamoNode = fbx.getObjectByName(mixamoName);
+    if (!mixamoNode) return;
+
+    const vrmNode = data.vrm.humanoid.getNormalizedBoneNode(vrmBoneName);
+    if (!vrmNode) return;
+
+    // Calculate retargeted quaternion
+    mixamoNode.getWorldQuaternion(restRotationInverse).invert();
+    if (mixamoNode.parent) {
+      mixamoNode.parent.getWorldQuaternion(parentRestWorldRotation);
+    } else {
+      parentRestWorldRotation.identity();
+    }
+
+    // The mixamo bone's local rotation, retargeted
+    _quatA.copy(mixamoNode.quaternion);
+    _quatA.premultiply(parentRestWorldRotation).multiply(restRotationInverse);
+
+    // Flip for VRM coordinate system
+    vrmNode.quaternion.set(-_quatA.x, _quatA.y, -_quatA.z, _quatA.w);
+  });
+
+  // Handle hips position
+  const mixamoHips = fbx.getObjectByName('mixamorigHips');
+  if (mixamoHips) {
+    const vrmHipsNode = data.vrm.humanoid.getNormalizedBoneNode('hips');
+    if (vrmHipsNode) {
+      const motionHipsHeight = mixamoHips.position.y;
+      const vrmHipsY = data.vrm.humanoid.normalizedRestPose.hips
+        ? data.vrm.humanoid.normalizedRestPose.hips.position[1] : 1;
+      const scale = vrmHipsY / (motionHipsHeight || 1);
+      vrmHipsNode.position.set(
+        -mixamoHips.position.x * scale,
+        mixamoHips.position.y * scale,
+        -mixamoHips.position.z * scale
+      );
+    }
+  }
+
+  console.log('Static pose applied from FBX (no animation clips found).');
+}
+
 // Mixamo -> VRM 骨格マッピング (T-Poseを前提)
 const mixamoVRMRigMap = {
   mixamorigHips: 'hips',
@@ -462,10 +591,15 @@ function loadFbxFromUrl(url, onComplete) {
   }
   document.getElementById('loading').classList.remove('hidden');
 
+  // Reset breath base so new pose/anim gets clean values
+  resetBreathBase(data);
+
   const loader = new FBXLoader();
   loader.load(url, (fbx) => {
     const clip = THREE.AnimationClip.findByName(fbx.animations, 'mixamo.com') || fbx.animations[0];
     if (clip) {
+      // --- Animated FBX ---
+      data.poseApplied = false;
       const tracks = [];
       const restRotationInverse = new THREE.Quaternion();
       const parentRestWorldRotation = new THREE.Quaternion();
@@ -539,12 +673,26 @@ function loadFbxFromUrl(url, onComplete) {
       action.play();
       if (onComplete) onComplete();
     } else {
-      alert("No animations found in the FBX file.");
+      // --- Pose-only FBX (no animation clips) ---
+      console.log('No animation clips found. Applying as static pose with breathing.');
+      if (data.mixer) {
+        data.mixer.stopAllAction();
+        data.mixer = null;
+      }
+      applyStaticPoseFromFBX(fbx, data);
+
+      // Auto-enable breathing for pose-only
+      const breatheCheckbox = document.getElementById('auto-breathe');
+      if (breatheCheckbox && !breatheCheckbox.checked) {
+        breatheCheckbox.checked = true;
+      }
+
+      if (onComplete) onComplete();
     }
     document.getElementById('loading').classList.add('hidden');
   }, undefined, (err) => {
     console.error(err);
-    alert('Failed to load FBX Animation');
+    alert('Failed to load FBX');
     document.getElementById('loading').classList.add('hidden');
     if (onComplete) onComplete();
   });
@@ -938,6 +1086,33 @@ document.getElementById('stage-light').addEventListener('input', (e) => {
       if (child.isLight && child.userData.originalIntensity !== undefined) {
         child.intensity = child.userData.originalIntensity * intensityMultiplier;
       }
+    });
+  }
+});
+
+// Breathing intensity slider label update
+document.getElementById('breathe-intensity').addEventListener('input', (e) => {
+  document.getElementById('breathe-intensity-val').textContent = e.target.value;
+});
+
+// When breathing is unchecked, reset bones to their stored base rotation
+document.getElementById('auto-breathe').addEventListener('change', (e) => {
+  if (!e.target.checked) {
+    vrmData.forEach(data => {
+      if (!data.vrm || !data.vrm.humanoid) return;
+      const boneNames = ['spine', 'chest', 'upperChest', 'leftShoulder', 'rightShoulder'];
+      boneNames.forEach(name => {
+        const node = data.vrm.humanoid.getNormalizedBoneNode(name);
+        if (node) {
+          if (node.userData._breathBaseX !== undefined) {
+            node.rotation.x = node.userData._breathBaseX;
+          }
+          if (node.userData._breathBaseZ !== undefined) {
+            node.rotation.z = node.userData._breathBaseZ;
+          }
+        }
+      });
+      resetBreathBase(data);
     });
   }
 });
