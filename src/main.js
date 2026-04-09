@@ -66,7 +66,9 @@ function animate() {
         // Target 1 or 2's specific settings can be overridden later, 
         // but for now lookAt targets camera globally.
         const isLookAtCamera = document.getElementById('look-at-camera').checked;
-        data.vrm.lookAt.target = isLookAtCamera ? camera : null;
+        if (data.vrm.lookAt) {
+          data.vrm.lookAt.target = isLookAtCamera ? camera : null;
+        }
 
         data.vrm.update(delta);
       }
@@ -113,7 +115,11 @@ transformControl = new TransformControls(camera, renderer.domElement);
 transformControl.addEventListener('dragging-changed', (event) => {
   controls.enabled = !event.value;
 });
-scene.add(transformControl);
+if (transformControl.getHelper) {
+  scene.add(transformControl.getHelper());
+} else {
+  scene.add(transformControl);
+}
 
 document.getElementById('gizmo-translate').addEventListener('click', () => { transformControl.setMode('translate'); updateGizmoUI('gizmo-translate'); });
 document.getElementById('gizmo-rotate').addEventListener('click', () => { transformControl.setMode('rotate'); updateGizmoUI('gizmo-rotate'); });
@@ -1094,22 +1100,6 @@ document.getElementById('stage-upload').addEventListener('change', (e) => {
 });
 
 // Stage Option Sliders
-document.getElementById('stage-scale').addEventListener('input', (e) => {
-  const scale = Number(e.target.value) / 100;
-  document.getElementById('stage-scale-val').textContent = e.target.value;
-  if (currentStage) {
-    currentStage.scale.set(scale, scale, scale);
-  }
-});
-
-document.getElementById('stage-y').addEventListener('input', (e) => {
-  const yOffset = Number(e.target.value) / 100;
-  document.getElementById('stage-y-val').textContent = yOffset.toFixed(2);
-  if (currentStage) {
-    currentStage.position.y = yOffset;
-  }
-});
-
 document.getElementById('stage-light').addEventListener('input', (e) => {
   // slider: 0 ~ 100. (5 = 1.0x default modifier, 100 = 20.0x modifier)
   const val = Number(e.target.value);
