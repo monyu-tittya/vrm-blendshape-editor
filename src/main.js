@@ -1,29 +1,29 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+import { TransformControls } from 'three/examples/jsm/controls/TransformControls.js';
 import { FBXLoader } from 'three/examples/jsm/loaders/FBXLoader.js';
 import { BVHLoader } from 'three/examples/jsm/loaders/BVHLoader.js';
 import { VRMLoaderPlugin } from '@pixiv/three-vrm';
-import { GLBEditor } from './glbParser.js';
 
-let currentVRM = null;
-let currentGLTF = null;
-let currentStage = null;
-let glbEditor = null;
-let blendShapeGroups = [];
-let meshesWithTargets = [];
-let currentPresetName = '';
-let currentPresetIndex = 0;
-let previewAmount = 100;
-let currentMixer = null;
-let blinkWeight = 0;
-let nextBlinkTime = 0;
-let talkWeights = { A: 0, I: 0, U: 0, E: 0, O: 0 };
-let nextTalkSwitchTime = 0;
-let currentTalkTarget = 'A';
+export const vrmData = [
+  {
+    vrm: null, mixer: null, gltf: null,
+    blinkWeight: 0, nextBlinkTime: 0,
+    talkWeights: { A: 0, I: 0, U: 0, E: 0, O: 0 },
+    nextTalkSwitchTime: 0, currentTalkTarget: 'A'
+  },
+  {
+    vrm: null, mixer: null, gltf: null,
+    blinkWeight: 0, nextBlinkTime: 0,
+    talkWeights: { A: 0, I: 0, U: 0, E: 0, O: 0 },
+    nextTalkSwitchTime: 0, currentTalkTarget: 'A'
+  }
+];
 
-// Mapping: glTF mesh index -> array of Three.js SkinnedMesh objects found in the scene
-let sceneMeshMap = {};
+export let activeVrmIndex = 0;
+export let currentStage = null;
+let transformControl = null;
 
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(30, window.innerWidth / window.innerHeight, 0.1, 20.0);
@@ -50,29 +50,30 @@ function animate() {
   requestAnimationFrame(animate);
   const delta = clock.getDelta();
   
-  try {
-    if (currentMixer) {
-      currentMixer.update(delta);
+  vrmData.forEach((data, index) => {
+    try {
+      if (data.mixer) data.mixer.update(delta);
+    } catch (e) {
+      console.error(`VRM ${index} Animation error:`, e);
+      data.mixer = null;
     }
-  } catch (e) {
-    console.error("Animation format error:", e);
-    currentMixer = null;
-  }
-  
-  try {
-    if (currentVRM) {
-      updateAutoBlink(delta);
-      updateAutoTalk(delta);
-      
-      const isLookAtCamera = document.getElementById('look-at-camera').checked;
-      currentVRM.lookAt.target = isLookAtCamera ? camera : null;
+    
+    try {
+      if (data.vrm) {
+        updateAutoBlink(delta, data);
+        updateAutoTalk(delta, data);
+        
+        // Target 1 or 2's specific settings can be overridden later, 
+        // but for now lookAt targets camera globally.
+        const isLookAtCamera = document.getElementById('look-at-camera').checked;
+        data.vrm.lookAt.target = isLookAtCamera ? camera : null;
 
-      currentVRM.update(delta);
-      applyPreview();
+        data.vrm.update(delta);
+      }
+    } catch (e) {
+      console.warn(`VRM ${index} update error:`, e);
     }
-  } catch (e) {
-    console.warn("VRM update error (skipping frame):", e);
-  }
+  });
 
   renderer.render(scene, camera);
 }
@@ -85,87 +86,109 @@ window.addEventListener('resize', () => {
   renderer.setSize(viewer.clientWidth, viewer.clientHeight);
 });
 
+// Target Switch UI
+document.getElementById('target-vrm0').addEventListener('click', () => {
+  activeVrmIndex = 0;
+  document.getElementById('target-vrm0').classList.replace('btn', 'btn primary');
+  if(document.getElementById('target-vrm1').classList.contains('primary')){
+     document.getElementById('target-vrm1').classList.replace('btn primary', 'btn');
+  }
+  document.getElementById('target-vrm1').style.opacity = '0.6';
+  document.getElementById('target-vrm0').style.opacity = '1';
+  refreshTargetUI();
+});
+document.getElementById('target-vrm1').addEventListener('click', () => {
+  activeVrmIndex = 1;
+  document.getElementById('target-vrm1').classList.replace('btn', 'btn primary');
+  if(document.getElementById('target-vrm0').classList.contains('primary')) {
+     document.getElementById('target-vrm0').classList.replace('btn primary', 'btn');
+  }
+  document.getElementById('target-vrm0').style.opacity = '0.6';
+  document.getElementById('target-vrm1').style.opacity = '1';
+  refreshTargetUI();
+});
+
+// TransformControls Initialization
+transformControl = new TransformControls(camera, renderer.domElement);
+transformControl.addEventListener('dragging-changed', (event) => {
+  controls.enabled = !event.value;
+});
+scene.add(transformControl);
+
+document.getElementById('gizmo-translate').addEventListener('click', () => { transformControl.setMode('translate'); updateGizmoUI('gizmo-translate'); });
+document.getElementById('gizmo-rotate').addEventListener('click', () => { transformControl.setMode('rotate'); updateGizmoUI('gizmo-rotate'); });
+document.getElementById('gizmo-scale').addEventListener('click', () => { transformControl.setMode('scale'); updateGizmoUI('gizmo-scale'); });
+
+function updateGizmoUI(activeId) {
+  ['gizmo-translate', 'gizmo-rotate', 'gizmo-scale'].forEach(id => {
+    document.getElementById(id).classList.remove('active');
+    document.getElementById(id).style.borderColor = '';
+  });
+  document.getElementById(activeId).classList.add('active');
+  document.getElementById(activeId).style.borderColor = 'var(--primary-color)';
+}
+
+document.getElementById('attach-vrm').addEventListener('click', () => {
+  const target = vrmData[activeVrmIndex].vrm;
+  if(target) transformControl.attach(target.scene);
+  else alert("現在選択されているタブにVRMがロードされていません");
+});
+document.getElementById('attach-stage').addEventListener('click', () => {
+  if(currentStage) transformControl.attach(currentStage);
+  else alert("ステージがロードされていません");
+});
+document.getElementById('detach-gizmo').addEventListener('click', () => {
+  transformControl.detach();
+});
+
 // Load handling
 document.getElementById('vrm-upload').addEventListener('change', (e) => {
   const file = e.target.files[0];
   if (!file) return;
 
-  const reader = new FileReader();
-  reader.onload = async () => {
-    document.getElementById('loading').classList.remove('hidden');
-    try {
-      glbEditor = new GLBEditor(reader.result);
-      
-      const vrmBlob = new Blob([reader.result], { type: 'application/octet-stream' });
-      const url = URL.createObjectURL(vrmBlob);
+  document.getElementById('loading').classList.remove('hidden');
+  const url = URL.createObjectURL(file);
 
-      const loader = new GLTFLoader();
-      loader.register((parser) => {
-        return new VRMLoaderPlugin(parser);
-      });
+  const loader = new GLTFLoader();
+  loader.register((parser) => new VRMLoaderPlugin(parser));
 
-      loader.load(url, async (gltf) => {
-        if (currentVRM) {
-          scene.remove(currentVRM.scene);
-          currentVRM.dispose();
-          if (currentMixer) {
-            currentMixer.stopAllAction();
-            currentMixer = null; // 安全のためミキサーも同時にリセット
-          }
-        }
-
-        currentGLTF = gltf;
-        currentVRM = gltf.userData.vrm;
-        scene.add(currentVRM.scene);
-        currentVRM.scene.rotation.y = Math.PI; // Face the camera
-
-        blendShapeGroups = glbEditor.getBlendShapeGroups();
-        meshesWithTargets = glbEditor.getMeshesWithMorphTargets();
-
-        console.log("=== Debug Info ===");
-        console.log("BlendShape Groups:", blendShapeGroups);
-        console.log("Meshes with morph targets:", meshesWithTargets);
-
-        // Build sceneMeshMap perfectly by asking GLTFLoader parser for the exact mesh index
-        sceneMeshMap = {};
-        for (const meta of meshesWithTargets) {
-          sceneMeshMap[meta.index] = [];
-          try {
-            const obj = await currentGLTF.parser.getDependency('mesh', meta.index);
-            if (obj) {
-              if (obj.isGroup) {
-                obj.traverse(child => {
-                  if ((child.isMesh || child.isSkinnedMesh) && child.morphTargetInfluences) {
-                    sceneMeshMap[meta.index].push(child);
-                  }
-                });
-              } else if ((obj.isMesh || obj.isSkinnedMesh) && obj.morphTargetInfluences) {
-                sceneMeshMap[meta.index].push(obj);
-              }
-            }
-          } catch(e) {
-            console.warn(`Could not get mesh index ${meta.index} from parser`, e);
-          }
-        }
-
-        document.getElementById('vrm-download').disabled = false;
-        document.getElementById('editor-container').classList.remove('hidden');
-
-        renderTabs();
-        if (blendShapeGroups.length > 0) {
-          selectPreset(0);
-        }
-
-        document.getElementById('loading').classList.add('hidden');
-      });
-
-    } catch (err) {
-      console.error(err);
-      alert("Error loading VRM: " + err.message);
-      document.getElementById('loading').classList.add('hidden');
+  loader.load(url, (gltf) => {
+    const data = vrmData[activeVrmIndex];
+    if (data.vrm) {
+      scene.remove(data.vrm.scene);
+      data.vrm.dispose();
+      if (data.mixer) {
+        data.mixer.stopAllAction();
+        data.mixer = null;
+      }
     }
-  };
-  reader.readAsArrayBuffer(file);
+
+    data.gltf = gltf;
+    data.vrm = gltf.userData.vrm;
+    scene.add(data.vrm.scene);
+    
+    // Spread them out slightly by default if loading into slot 1
+    if (activeVrmIndex === 1 && data.vrm.scene.position.x === 0) {
+      data.vrm.scene.position.x = 0.5;
+      if(vrmData[0].vrm && vrmData[0].vrm.scene.position.x === 0) {
+        vrmData[0].vrm.scene.position.x = -0.5;
+      }
+    }
+
+    data.vrm.scene.rotation.y = Math.PI; // Face the camera
+
+    document.getElementById('editor-container').classList.remove('hidden');
+    refreshTargetUI();
+    document.getElementById('loading').classList.add('hidden');
+    
+    // reset input
+    e.target.value = '';
+    URL.revokeObjectURL(url);
+  }, undefined, (err) => {
+    console.error(err);
+    alert("Error loading VRM");
+    document.getElementById('loading').classList.add('hidden');
+  });
 });
 
 function renderTabs() {
@@ -599,18 +622,9 @@ const bvhVRMRigMap = {
   'R_Foot': 'rightFoot'
 };
 
-document.getElementById('fbx-upload').addEventListener('change', (e) => {
-  const file = e.target.files[0];
-  if (!file || !currentVRM) {
-    alert("Please load a VRM file first.");
-    return;
-  }
-  const url = URL.createObjectURL(file);
-  loadFbxFromUrl(url, () => URL.revokeObjectURL(url));
-});
-
 function loadFbxFromUrl(url, onComplete) {
-  if (!currentVRM) {
+  const data = vrmData[activeVrmIndex];
+  if (!data.vrm) {
     alert("Please load a VRM file first.");
     return;
   }
@@ -618,7 +632,6 @@ function loadFbxFromUrl(url, onComplete) {
 
   const loader = new FBXLoader();
   loader.load(url, (fbx) => {
-    // 最初の有効なアニメーションを探す（通常 .animations[0] が mixamo.com ）
     const clip = THREE.AnimationClip.findByName(fbx.animations, 'mixamo.com') || fbx.animations[0];
     if (clip) {
       const tracks = [];
@@ -626,10 +639,9 @@ function loadFbxFromUrl(url, onComplete) {
       const parentRestWorldRotation = new THREE.Quaternion();
       const _quatA = new THREE.Quaternion();
 
-      // hipsの高さから全体スケールを計算して歩幅調整
       const mixamoHips = fbx.getObjectByName('mixamorigHips');
       const motionHipsHeight = mixamoHips ? mixamoHips.position.y : 1;
-      const vrmHipsHeight = currentVRM.humanoid.normalizedRestPose.hips ? currentVRM.humanoid.normalizedRestPose.hips.position[1] : 1;
+      const vrmHipsHeight = data.vrm.humanoid.normalizedRestPose.hips ? data.vrm.humanoid.normalizedRestPose.hips.position[1] : 1;
       const hipsPositionScale = vrmHipsHeight / motionHipsHeight;
 
       clip.tracks.forEach((track) => {
@@ -640,20 +652,16 @@ function loadFbxFromUrl(url, onComplete) {
         const mixamoRigNode = fbx.getObjectByName(mixamoRigName);
         
         if (vrmBoneName && mixamoRigNode) {
-          const vrmNodeName = currentVRM.humanoid.getNormalizedBoneNode(vrmBoneName)?.name;
+          const vrmNodeName = data.vrm.humanoid.getNormalizedBoneNode(vrmBoneName)?.name;
           if (vrmNodeName) {
             
-            // Mixamo骨の初期レストポーズ（ワールド回転）を保存
             mixamoRigNode.getWorldQuaternion(restRotationInverse).invert();
             mixamoRigNode.parent.getWorldQuaternion(parentRestWorldRotation);
 
             if (track instanceof THREE.QuaternionKeyframeTrack) {
-              // クォータニオンの変換
               for (let i = 0; i < track.values.length; i += 4) {
                 const flatQuaternion = track.values.slice(i, i + 4);
                 _quatA.fromArray(flatQuaternion);
-                
-                // 親のレスト時ワールド回転 * トラックの回転 * 自己レスト時ワールド回転の逆
                 _quatA.premultiply(parentRestWorldRotation).multiply(restRotationInverse);
                 _quatA.toArray(flatQuaternion);
 
@@ -666,18 +674,14 @@ function loadFbxFromUrl(url, onComplete) {
                 new THREE.QuaternionKeyframeTrack(
                   `${vrmNodeName}.${propertyName}`,
                   track.times,
-                  // VRM 0.x向けに XとZを反転
                   track.values.map((v, i) => (i % 2 === 0 ? -v : v))
                 )
               );
             } else if (track instanceof THREE.VectorKeyframeTrack && propertyName === 'position') {
-              // 位置の変換（Hips用）VRM 0.x向けに XとZを反転
               const isInPlace = document.getElementById('anim-inplace').checked;
               const value = track.values.map((v, i) => {
                 const axis = i % 3;
-                if (isInPlace && (axis === 0 || axis === 2)) {
-                  return 0; // XとZの移動を無効化
-                }
+                if (isInPlace && (axis === 0 || axis === 2)) return 0;
                 return (axis !== 1 ? -v : v) * hipsPositionScale;
               });
               tracks.push(new THREE.VectorKeyframeTrack(`${vrmNodeName}.${propertyName}`, track.times, value));
@@ -688,19 +692,18 @@ function loadFbxFromUrl(url, onComplete) {
 
       const retargetedClip = new THREE.AnimationClip('vrmAnimation', clip.duration, tracks);
       
-      if (currentMixer) {
-        currentMixer.stopAllAction();
+      if (data.mixer) {
+        data.mixer.stopAllAction();
       }
-      currentMixer = new THREE.AnimationMixer(currentVRM.scene);
+      data.mixer = new THREE.AnimationMixer(data.vrm.scene);
       
-      // ループ時にSpringBoneをリセットして「跳ねる」現象を防止
-      currentMixer.addEventListener('loop', () => {
-        if (currentVRM && currentVRM.springBoneManager) {
-          currentVRM.springBoneManager.reset();
+      data.mixer.addEventListener('loop', () => {
+        if (data.vrm && data.vrm.springBoneManager) {
+          data.vrm.springBoneManager.reset();
         }
       });
 
-      const action = currentMixer.clipAction(retargetedClip);
+      const action = data.mixer.clipAction(retargetedClip);
       action.play();
       if (onComplete) onComplete();
     } else {
@@ -873,9 +876,10 @@ deleteAnimBtn.addEventListener('click', async () => {
 
 document.getElementById('fbx-upload').addEventListener('change', async (e) => {
   const file = e.target.files[0];
-  if (!file || !currentVRM) {
-    if (!currentVRM) alert("Please load a VRM file first.");
-    e.target.value = ''; // 次も同じファイルを選べるようにリセット
+  const data = vrmData[activeVrmIndex];
+  if (!file || !data.vrm) {
+    if (!data.vrm) alert("Please load a VRM file first.");
+    e.target.value = '';
     return;
   }
   
@@ -887,9 +891,10 @@ document.getElementById('fbx-upload').addEventListener('change', async (e) => {
 
 document.getElementById('bvh-upload').addEventListener('change', async (e) => {
   const file = e.target.files[0];
-  if (!file || !currentVRM) {
-    if (!currentVRM) alert("Please load a VRM file first.");
-    e.target.value = ''; // 次も同じファイルを選べるようにリセット
+  const data = vrmData[activeVrmIndex];
+  if (!file || !data.vrm) {
+    if (!data.vrm) alert("Please load a VRM file first.");
+    e.target.value = '';
     return;
   }
 
@@ -900,7 +905,8 @@ document.getElementById('bvh-upload').addEventListener('change', async (e) => {
 });
 
 function loadBvhFromUrl(url, onComplete) {
-  if (!currentVRM) {
+  const data = vrmData[activeVrmIndex];
+  if (!data.vrm) {
     alert("Please load a VRM file first.");
     return;
   }
@@ -911,7 +917,6 @@ function loadBvhFromUrl(url, onComplete) {
     const clip = bvh.clip;
     const skeleton = bvh.skeleton;
     if (clip && skeleton) {
-      // 骨格階層全体を更新しておく（getWorldQuaternion 計算のため）
       skeleton.bones[0].updateMatrixWorld(true);
 
       const tracks = [];
@@ -919,17 +924,10 @@ function loadBvhFromUrl(url, onComplete) {
       const parentRestWorldRotation = new THREE.Quaternion();
       const _quatA = new THREE.Quaternion();
 
-      // Hips スケール調整
       const bvhHips = skeleton.bones.find(b => b.name === 'Hips' || b.name === 'hips');
-      // 親座標からのWorld位置を取る
       const motionHipsHeight = bvhHips ? bvhHips.position.y : 1; 
-      const vrmHipsHeight = currentVRM.humanoid.normalizedRestPose.hips ? currentVRM.humanoid.normalizedRestPose.hips.position[1] : 1;
-      // BVHはサイズがまちまちなため強制スケール調整
+      const vrmHipsHeight = data.vrm.humanoid.normalizedRestPose.hips ? data.vrm.humanoid.normalizedRestPose.hips.position[1] : 1;
       const hipsPositionScale = motionHipsHeight > 0.001 ? vrmHipsHeight / motionHipsHeight : 1.0;
-
-      // Map tracking for debugging unmapped bones
-      const mappedBones = new Set();
-      const unmappedBones = new Set();
 
       clip.tracks.forEach((track) => {
         const trackSplits = track.name.split('.');
@@ -939,12 +937,8 @@ function loadBvhFromUrl(url, onComplete) {
         
         let vrmBoneName = bvhVRMRigMap[bvhRigName];
         
-        // ざっくりとした大文字小文字・アンダーバー無視のフォールバック検索
         if (!vrmBoneName) {
            const normalizedName = bvhRigName.toLowerCase().replace(/[^a-z0-9]/g, '');
-           
-           // 1. VRMの標準ボーン名（leftUpperArmなど）と直接一致するかチェック
-           // mixamoマッピングで使われている全VRMボーン名を収集
            const allVrmBones = Array.from(new Set([
              ...Object.values(mixamoVRMRigMap), 
              ...Object.values(bvhVRMRigMap),
@@ -955,7 +949,6 @@ function loadBvhFromUrl(url, onComplete) {
            if (directMatch) {
              vrmBoneName = directMatch;
            } else {
-             // 2. 辞書側のキーと一致するかチェック
              const foundKey = Object.keys(bvhVRMRigMap).find(k => k.toLowerCase().replace(/[^a-z0-9]/g, '') === normalizedName);
              if (foundKey) vrmBoneName = bvhVRMRigMap[foundKey];
            }
@@ -964,11 +957,9 @@ function loadBvhFromUrl(url, onComplete) {
         const bvhRigNode = skeleton.bones.find(b => b.name === bvhRigName);
         
         if (vrmBoneName && bvhRigNode) {
-          mappedBones.add(bvhRigName + "->" + vrmBoneName);
-          const vrmNodeName = currentVRM.humanoid.getNormalizedBoneNode(vrmBoneName)?.name;
+          const vrmNodeName = data.vrm.humanoid.getNormalizedBoneNode(vrmBoneName)?.name;
           if (vrmNodeName) {
             
-            // 初期レストポーズ（ワールド回転）を保存
             bvhRigNode.getWorldQuaternion(restRotationInverse).invert();
             if (bvhRigNode.parent && bvhRigNode.parent.isBone) {
               bvhRigNode.parent.getWorldQuaternion(parentRestWorldRotation);
@@ -980,62 +971,43 @@ function loadBvhFromUrl(url, onComplete) {
               for (let i = 0; i < track.values.length; i += 4) {
                 const flatQuaternion = track.values.slice(i, i + 4);
                 _quatA.fromArray(flatQuaternion);
-                
-                // 親のレスト時ワールド回転 * トラックの回転 * 自己レスト時ワールド回転の逆
                 _quatA.premultiply(parentRestWorldRotation).multiply(restRotationInverse);
                 _quatA.toArray(flatQuaternion);
-
-                flatQuaternion.forEach((v, index) => {
-                  track.values[index + i] = v;
-                });
+                flatQuaternion.forEach((v, index) => { track.values[index + i] = v; });
               }
 
               tracks.push(
                 new THREE.QuaternionKeyframeTrack(
-                  `${vrmNodeName}.${propertyName}`,
-                  track.times,
-                  track.values.map((v, i) => (i % 2 === 0 ? -v : v))
+                  `${vrmNodeName}.${propertyName}`, track.times, track.values.map((v, i) => (i % 2 === 0 ? -v : v))
                 )
               );
             } else if (track instanceof THREE.VectorKeyframeTrack && propertyName === 'position') {
               const isInPlace = document.getElementById('anim-inplace').checked;
               const value = track.values.map((v, i) => {
                 const axis = i % 3;
-                if (isInPlace && (axis === 0 || axis === 2)) {
-                  return 0; // X,Zを無効化
-                }
+                if (isInPlace && (axis === 0 || axis === 2)) return 0;
                 return (axis !== 1 ? -v : v) * hipsPositionScale;
               });
               tracks.push(new THREE.VectorKeyframeTrack(`${vrmNodeName}.${propertyName}`, track.times, value));
             }
           }
-        } else {
-          // Record unmapped tracked bone names to help debugging
-          if (!unmappedBones.has(bvhRigName)) {
-            unmappedBones.add(bvhRigName);
-          }
         }
       });
       
-      console.log("Mapped BVH Bones:", Array.from(mappedBones));
-      if (unmappedBones.size > 0) {
-        console.warn("Unmapped BVH Bones (Did not match VRM structure):", Array.from(unmappedBones));
-      }
-
       const retargetedClip = new THREE.AnimationClip('vrmAnimationBvh', clip.duration, tracks);
       
-      if (currentMixer) {
-        currentMixer.stopAllAction();
+      if (data.mixer) {
+        data.mixer.stopAllAction();
       }
-      currentMixer = new THREE.AnimationMixer(currentVRM.scene);
+      data.mixer = new THREE.AnimationMixer(data.vrm.scene);
       
-      currentMixer.addEventListener('loop', () => {
-        if (currentVRM && currentVRM.springBoneManager) {
-          currentVRM.springBoneManager.reset();
+      data.mixer.addEventListener('loop', () => {
+        if (data.vrm && data.vrm.springBoneManager) {
+          data.vrm.springBoneManager.reset();
         }
       });
 
-      const action = currentMixer.clipAction(retargetedClip);
+      const action = data.mixer.clipAction(retargetedClip);
       action.play();
       if (onComplete) onComplete();
     } else {

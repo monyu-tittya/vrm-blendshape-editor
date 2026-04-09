@@ -12,9 +12,18 @@
       <aside id="sidebar">
         <header>
           <h1>VRM BlendShape Editor</h1>
+          <!-- Multi-VRM Target Selector -->
+          <div style="display: flex; gap: 10px; margin-bottom: 10px;">
+            <button id="target-vrm0" class="btn primary" style="flex:1;">Target: VRM 1</button>
+            <button id="target-vrm1" class="btn" style="flex:1; opacity: 0.6;">Target: VRM 2</button>
+          </div>
+
           <div class="file-action">
-            <label for="vrm-upload" class="btn primary">Load VRM</label>
+            <label for="vrm-upload" class="btn primary" style="flex:1;">Load VRM</label>
             <input type="file" id="vrm-upload" accept=".vrm" style="display:none;" />
+          </div>
+
+          <div class="file-action" style="margin-top: 10px;">
             <div style="display: flex; gap: 10px;">
               <select id="preset-anim-select" class="btn" style="flex: 2;">
                 <option value="">-- Preset Anim --</option>
@@ -44,22 +53,30 @@
               </div>
             </div>
           </div>
+          
           <div class="file-action" style="margin-top: 10px;">
             <label for="stage-upload" class="btn">Load Stage</label>
             <input type="file" id="stage-upload" accept=".fbx,.glb,.gltf" style="display:none;" />
-            <button id="vrm-download" class="btn primary" disabled>Export VRM</button>
           </div>
-          <div id="stage-controls" class="hidden" style="margin-top: 10px; padding: 10px; background: #252526; border-radius: 4px;">
-            <div style="font-size: 0.85rem; margin-bottom: 5px; color: var(--primary-hover);">Stage Options</div>
+
+          <!-- 3D Transform Controls -->
+          <div id="transform-ui" style="margin-top: 10px; padding: 10px; background: #252526; border-radius: 4px;">
+            <div style="font-size: 0.85rem; margin-bottom: 5px; color: var(--primary-hover);">3D Object Editor</div>
+            <div style="display: flex; gap: 10px; margin-bottom: 10px;">
+              <button id="gizmo-translate" class="btn btn-sm active" style="flex:1; border: 1px solid var(--primary-color);">Move</button>
+              <button id="gizmo-rotate" class="btn btn-sm" style="flex:1;">Rotate</button>
+              <button id="gizmo-scale" class="btn btn-sm" style="flex:1;">Scale</button>
+            </div>
+            <div style="display: flex; gap: 10px;">
+              <button id="attach-vrm" class="btn primary btn-sm" style="flex:1;">Attach VRM</button>
+              <button id="attach-stage" class="btn btn-sm" style="flex:1;">Attach Stage</button>
+              <button id="detach-gizmo" class="btn btn-sm" style="flex:0; padding:0 10px;" title="Detach Selection">X</button>
+            </div>
+          </div>
+          
+          <!-- Stage Light -->
+          <div id="stage-controls" class="hidden" style="margin-top: 5px; padding: 5px 10px; background: #252526; border-radius: 4px;">
             <div class="preview-slider">
-              <label>Scale <span id="stage-scale-val">100</span>%</label>
-              <input type="range" id="stage-scale" min="1" max="500" value="100" />
-            </div>
-            <div class="preview-slider" style="margin-top: 5px;">
-              <label>Height (Y) <span id="stage-y-val">0.00</span>m</label>
-              <input type="range" id="stage-y" min="-500" max="500" value="0" />
-            </div>
-            <div class="preview-slider" style="margin-top: 5px;">
               <label>Stage Light <span id="stage-light-val">1.0</span>x</label>
               <input type="range" id="stage-light" min="0" max="100" value="5" />
             </div>
