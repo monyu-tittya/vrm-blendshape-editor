@@ -91,20 +91,16 @@ window.addEventListener('resize', () => {
 // Target Switch UI
 document.getElementById('target-vrm0').addEventListener('click', () => {
   activeVrmIndex = 0;
-  document.getElementById('target-vrm0').classList.replace('btn', 'btn primary');
-  if(document.getElementById('target-vrm1').classList.contains('primary')){
-     document.getElementById('target-vrm1').classList.replace('btn primary', 'btn');
-  }
+  document.getElementById('target-vrm0').classList.add('primary');
+  document.getElementById('target-vrm1').classList.remove('primary');
   document.getElementById('target-vrm1').style.opacity = '0.6';
   document.getElementById('target-vrm0').style.opacity = '1';
   refreshTargetUI();
 });
 document.getElementById('target-vrm1').addEventListener('click', () => {
   activeVrmIndex = 1;
-  document.getElementById('target-vrm1').classList.replace('btn', 'btn primary');
-  if(document.getElementById('target-vrm0').classList.contains('primary')) {
-     document.getElementById('target-vrm0').classList.replace('btn primary', 'btn');
-  }
+  document.getElementById('target-vrm1').classList.add('primary');
+  document.getElementById('target-vrm0').classList.remove('primary');
   document.getElementById('target-vrm0').style.opacity = '0.6';
   document.getElementById('target-vrm1').style.opacity = '1';
   refreshTargetUI();
@@ -197,295 +193,125 @@ document.getElementById('vrm-upload').addEventListener('change', (e) => {
   });
 });
 
-function renderTabs() {
-  const tabsContainer = document.getElementById('preset-tabs');
-  tabsContainer.innerHTML = '';
-  blendShapeGroups.forEach((group, index) => {
-    const tab = document.createElement('div');
-    tab.className = `tab ${index === currentPresetIndex ? 'active' : ''}`;
-    tab.textContent = group.name || group.presetName;
-    tab.onclick = () => selectPreset(index);
-    tabsContainer.appendChild(tab);
-  });
-}
-
-function selectPreset(index) {
-  currentPresetIndex = index;
-  const group = blendShapeGroups[index];
-  currentPresetName = group.name || group.presetName;
-  
-  document.getElementById('current-preset-name').textContent = `Preset: ${currentPresetName}`;
-  Array.from(document.getElementById('preset-tabs').children).forEach((tab, i) => {
-    if (i === index) tab.classList.add('active');
-    else tab.classList.remove('active');
-  });
-
-  renderSliders(group);
-  applyPreview();
-}
-
-function renderSliders(group) {
+function refreshTargetUI() {
+  const data = vrmData[activeVrmIndex];
   const container = document.getElementById('mesh-targets');
+  
+  if (!data || !data.vrm) {
+    container.innerHTML = '<p style="padding:10px;">No VRM loaded in this slot.</p>';
+    document.getElementById('current-preset-name').textContent = '';
+    return;
+  }
+  
+  const expManager = data.vrm.expressionManager;
+  if (!expManager) return;
+  
+  const exps = expManager.expressions;
   container.innerHTML = '';
-
-  meshesWithTargets.forEach(meshMeta => {
-    const meshGroupDiv = document.createElement('div');
-    meshGroupDiv.className = 'mesh-group';
+  document.getElementById('current-preset-name').textContent = 'VRM Expressions';
+  
+  exps.forEach(exp => {
+    const itemDiv = document.createElement('div');
+    itemDiv.className = 'target-item';
     
-    const h3 = document.createElement('h3');
-    h3.textContent = meshMeta.name;
-    meshGroupDiv.appendChild(h3);
-
-    meshMeta.targetNames.forEach((targetName, targetIndex) => {
-      // Find if this group has a bind for this mesh & target
-      const bind = group.binds ? group.binds.find(b => b.mesh === meshMeta.index && b.index === targetIndex) : null;
-      const initialValue = bind ? bind.weight : 0;
-
-      const itemDiv = document.createElement('div');
-      itemDiv.className = 'target-item';
-
-      const headerDiv = document.createElement('div');
-      headerDiv.className = 'target-item-header';
-      headerDiv.innerHTML = `<span>${targetName}</span><span>${initialValue}</span>`;
-      
-      const sliderDiv = document.createElement('div');
-      sliderDiv.className = 'target-slider';
-      
-      const input = document.createElement('input');
-      input.type = 'range';
-      input.min = 0;
-      input.max = 100;
-      input.value = initialValue;
-
-      const numberEntry = document.createElement('input');
-      numberEntry.type = 'number';
-      numberEntry.min = 0;
-      numberEntry.max = 100;
-      numberEntry.value = initialValue;
-
-      const updateValue = (val) => {
-        val = Math.max(0, Math.min(100, val));
-        input.value = val;
-        numberEntry.value = val;
-        headerDiv.children[1].textContent = val;
-        
-        // Update the JSON bind
-        if (!group.binds) group.binds = [];
-        
-        const existingBindIndex = group.binds.findIndex(b => b.mesh === meshMeta.index && b.index === targetIndex);
-        if (val === 0) {
-          if (existingBindIndex >= 0) {
-            group.binds.splice(existingBindIndex, 1);
-          }
-        } else {
-          if (existingBindIndex >= 0) {
-            group.binds[existingBindIndex].weight = val;
-          } else {
-            group.binds.push({ mesh: meshMeta.index, index: targetIndex, weight: val });
-          }
-        }
-        applyPreview();
-      };
-
-      input.oninput = (e) => updateValue(parseInt(e.target.value, 10));
-      numberEntry.onchange = (e) => updateValue(parseInt(e.target.value, 10));
-
-      sliderDiv.appendChild(input);
-      sliderDiv.appendChild(numberEntry);
-      
-      itemDiv.appendChild(headerDiv);
-      itemDiv.appendChild(sliderDiv);
-      meshGroupDiv.appendChild(itemDiv);
-    });
-
-    container.appendChild(meshGroupDiv);
+    const headerDiv = document.createElement('div');
+    headerDiv.className = 'target-item-header';
+    const currentVal = Math.round((expManager.getValue(exp.expressionName) || 0) * 100);
+    headerDiv.innerHTML = '<span>' + exp.expressionName + '</span><span>' + currentVal + '</span>';
+    
+    const sliderDiv = document.createElement('div');
+    sliderDiv.className = 'target-slider';
+    
+    const input = document.createElement('input');
+    input.type = 'range';
+    input.min = 0;
+    input.max = 100;
+    input.value = currentVal;
+    
+    const numberEntry = document.createElement('input');
+    numberEntry.type = 'number';
+    numberEntry.min = 0;
+    numberEntry.max = 100;
+    numberEntry.value = currentVal;
+    
+    const updateValue = (val) => {
+      val = Math.max(0, Math.min(100, val));
+      input.value = val;
+      numberEntry.value = val;
+      headerDiv.children[1].textContent = val;
+      expManager.setValue(exp.expressionName, val / 100);
+    };
+    
+    input.oninput = (e) => updateValue(parseInt(e.target.value, 10));
+    numberEntry.onchange = (e) => updateValue(parseInt(e.target.value, 10));
+    
+    sliderDiv.appendChild(input);
+    sliderDiv.appendChild(numberEntry);
+    
+    itemDiv.appendChild(headerDiv);
+    itemDiv.appendChild(sliderDiv);
+    container.appendChild(itemDiv);
   });
 }
 
-document.getElementById('preview-amount').addEventListener('input', (e) => {
-  previewAmount = parseInt(e.target.value, 10);
-  document.getElementById('preview-val').textContent = previewAmount;
-  applyPreview();
-});
-
-function applyPreview() {
-  if (!currentVRM || blendShapeGroups.length === 0) return;
-
-  // Clear all morph targets on all mapped scene meshes
-  Object.values(sceneMeshMap).forEach(meshArray => {
-    meshArray.forEach(mesh => {
-      if (mesh.morphTargetInfluences) {
-        for (let i = 0; i < mesh.morphTargetInfluences.length; i++) {
-          mesh.morphTargetInfluences[i] = 0;
-        }
-      }
-    });
-  });
-
-  // Apply current group binds
-  const group = blendShapeGroups[currentPresetIndex];
-  if (!group || !group.binds) return;
-
-  const previewRatio = previewAmount / 100;
-
-  group.binds.forEach(bind => {
-    const meshArray = sceneMeshMap[bind.mesh];
-    if (meshArray) {
-      meshArray.forEach(mesh => {
-        if (mesh.morphTargetInfluences && bind.index < mesh.morphTargetInfluences.length) {
-          // VRM 0.x weight is 0-100
-          mesh.morphTargetInfluences[bind.index] += (bind.weight / 100) * previewRatio;
-        }
-      });
-    }
-  });
-
-  // Apply Auto Blink if enabled
-  const isAutoBlink = document.getElementById('auto-blink').checked;
-  if (isAutoBlink && blinkWeight > 0) {
-    const blinkGroup = blendShapeGroups.find(g => g.presetName === 'Blink' || g.name?.toUpperCase() === 'BLINK');
-    if (blinkGroup && blinkGroup.binds) {
-      blinkGroup.binds.forEach(bind => {
-        const meshArray = sceneMeshMap[bind.mesh];
-        if (meshArray) {
-          meshArray.forEach(mesh => {
-            if (mesh.morphTargetInfluences && bind.index < mesh.morphTargetInfluences.length) {
-              const currentInf = mesh.morphTargetInfluences[bind.index];
-              // まばたきを上から重ねる（最大1.0でクランプ）
-              mesh.morphTargetInfluences[bind.index] = Math.min(1.0, currentInf + blinkWeight);
-            }
-          });
-        }
-      });
-    }
-  }
-
-  // Apply Auto Talk if enabled
-  const isAutoTalk = document.getElementById('auto-talk').checked;
-  if (isAutoTalk) {
-    ['A', 'I', 'U', 'E', 'O'].forEach(vowel => {
-      const weight = talkWeights[vowel];
-      if (weight > 0) {
-        const talkGroup = blendShapeGroups.find(g => g.presetName === vowel || g.name?.toUpperCase() === vowel);
-        if (talkGroup && talkGroup.binds) {
-          talkGroup.binds.forEach(bind => {
-            const meshArray = sceneMeshMap[bind.mesh];
-            if (meshArray) {
-              meshArray.forEach(mesh => {
-                if (mesh.morphTargetInfluences && bind.index < mesh.morphTargetInfluences.length) {
-                  const currentInf = mesh.morphTargetInfluences[bind.index];
-                  mesh.morphTargetInfluences[bind.index] = Math.min(1.0, currentInf + weight);
-                }
-              });
-            }
-          });
-        }
-      }
-    });
-  }
-
-  // Apply LookAt Expressions (for Expression-based LookAt models)
-  // vrm.update() で計算された視線ウェイトを救出する
-  const lookAtExps = ['lookUp', 'lookDown', 'lookLeft', 'lookRight'];
-  lookAtExps.forEach(expName => {
-    const weight = currentVRM.expressionManager.getValue(expName);
-    if (weight > 0) {
-      const talkGroup = blendShapeGroups.find(g => g.presetName === expName || (g.name && g.name.toLowerCase() === expName.toLowerCase()));
-      if (talkGroup && talkGroup.binds) {
-        talkGroup.binds.forEach(bind => {
-          const meshArray = sceneMeshMap[bind.mesh];
-          if (meshArray) {
-            meshArray.forEach(mesh => {
-              if (mesh.morphTargetInfluences && bind.index < mesh.morphTargetInfluences.length) {
-                const currentInf = mesh.morphTargetInfluences[bind.index];
-                mesh.morphTargetInfluences[bind.index] = Math.min(1.0, currentInf + weight);
-              }
-            });
-          }
-        });
-      }
-    }
-  });
-}
-
-function updateAutoBlink(delta) {
+function updateAutoBlink(delta, data) {
   const isAutoBlink = document.getElementById('auto-blink').checked;
   if (!isAutoBlink) {
-    blinkWeight = 0;
+    if(data.blinkWeight > 0) {
+      data.blinkWeight = 0;
+      if (data.vrm && data.vrm.expressionManager) data.vrm.expressionManager.setValue('blink', 0);
+    }
     return;
   }
 
   const now = performance.now() / 1000;
-  if (now > nextBlinkTime) {
-    // まばたき開始
-    const blinkDuration = 0.2; // 全体で0.2秒
-    const elapsed = now - nextBlinkTime;
+  if (now > data.nextBlinkTime) {
+    const blinkDuration = 0.2;
+    const elapsed = now - data.nextBlinkTime;
     
     if (elapsed < blinkDuration) {
-      // 三角波でまばたきを表現 (0 -> 1 -> 0)
-      blinkWeight = Math.sin((elapsed / blinkDuration) * Math.PI);
+      data.blinkWeight = Math.sin((elapsed / blinkDuration) * Math.PI);
     } else {
-      // まばたき終了。次の時間をセット (2〜6秒後)
-      blinkWeight = 0;
-      nextBlinkTime = now + 2 + Math.random() * 4;
+      data.blinkWeight = 0;
+      data.nextBlinkTime = now + 2 + Math.random() * 4;
     }
+  } else {
+    data.blinkWeight = 0;
+  }
+  
+  if (data.vrm && data.vrm.expressionManager) {
+    data.vrm.expressionManager.setValue('blink', data.blinkWeight);
   }
 }
 
-function updateAutoTalk(delta) {
+function updateAutoTalk(delta, data) {
   const isAutoTalk = document.getElementById('auto-talk').checked;
   if (!isAutoTalk) {
-    Object.keys(talkWeights).forEach(k => talkWeights[k] = 0);
+    Object.keys(data.talkWeights).forEach(k => {
+      data.talkWeights[k] = 0;
+      if(data.vrm && data.vrm.expressionManager) data.vrm.expressionManager.setValue(k.toLowerCase(), 0);
+    });
     return;
   }
 
   const now = performance.now() / 1000;
-  
-  if (now > nextTalkSwitchTime) {
-    // 次の母音へ切り替え
+  if (now > data.nextTalkSwitchTime) {
     const vowels = ['A', 'I', 'U', 'E', 'O'];
-    // 少し口を閉じる瞬間を入れるために、たまに空（無音）を混ぜる
     const nextOptions = [...vowels, null, null];
     const picked = nextOptions[Math.floor(Math.random() * nextOptions.length)];
-    
-    currentTalkTarget = picked;
-    nextTalkSwitchTime = now + 0.1 + Math.random() * 0.2; // 0.1s - 0.3s ごとに切り替え
+    data.currentTalkTarget = picked;
+    data.nextTalkSwitchTime = now + 0.1 + Math.random() * 0.2;
   }
 
-  // なめらかに遷移
   const vowels = ['A', 'I', 'U', 'E', 'O'];
   vowels.forEach(v => {
-    const target = (v === currentTalkTarget) ? 0.8 : 0; // 最大強度を少し抑えて0.8
-    talkWeights[v] += (target - talkWeights[v]) * Math.min(1.0, delta * 15); // 線形補間
+    const target = (v === data.currentTalkTarget) ? 0.8 : 0;
+    data.talkWeights[v] += (target - data.talkWeights[v]) * Math.min(1.0, delta * 15);
+    if(data.vrm && data.vrm.expressionManager) {
+      data.vrm.expressionManager.setValue(v.toLowerCase(), data.talkWeights[v]);
+    }
   });
 }
-
-document.getElementById('vrm-download').addEventListener('click', () => {
-  if (!glbEditor) return;
-  document.getElementById('loading').classList.remove('hidden');
-
-  setTimeout(() => {
-    try {
-      // Sync groups to editor
-      glbEditor.setBlendShapeGroups(blendShapeGroups);
-      
-      // Rebuild ArrayBuffer
-      const outBuffer = glbEditor.build();
-      
-      const blob = new Blob([outBuffer], { type: 'application/octet-stream' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = 'modified_blendshape.vrm';
-      a.click();
-      URL.revokeObjectURL(url);
-    } catch(err) {
-      console.error(err);
-      alert("Error occurred during export");
-    }
-    document.getElementById('loading').classList.add('hidden');
-  }, 100);
-});
 
 // Mixamo -> VRM 骨格マッピング (T-Poseを前提)
 const mixamoVRMRigMap = {
