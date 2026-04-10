@@ -30,11 +30,13 @@ export let currentStage = null;
 let transformControl = null;
 
 const scene = new THREE.Scene();
-const camera = new THREE.PerspectiveCamera(30, window.innerWidth / window.innerHeight, 0.1, 20.0);
+const viewerElement = document.getElementById('viewer');
+const initialAspect = viewerElement ? viewerElement.clientWidth / viewerElement.clientHeight : window.innerWidth / window.innerHeight;
+const camera = new THREE.PerspectiveCamera(45, initialAspect, 0.1, 20.0);
 camera.position.set(0.0, 1.4, 2.0);
 
 const renderer = new THREE.WebGLRenderer({ canvas: document.getElementById('main-canvas'), alpha: true, antialias: true });
-renderer.setSize(document.getElementById('viewer').clientWidth, document.getElementById('viewer').clientHeight);
+renderer.setSize(viewerElement.clientWidth, viewerElement.clientHeight);
 renderer.setPixelRatio(window.devicePixelRatio);
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 
