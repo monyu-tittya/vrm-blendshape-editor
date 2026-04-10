@@ -42,7 +42,7 @@ const controls = new OrbitControls(camera, renderer.domElement);
 controls.target.set(0.0, 1.4, 0.0);
 controls.update();
 
-const light = new THREE.DirectionalLight(0xffffff, Math.PI);
+const light = new THREE.DirectionalLight(0xffffff, 1.0);
 light.position.set(1.0, 1.0, 1.0).normalize();
 scene.add(light);
 const ambient = new THREE.AmbientLight(0xffffff, 0.5);
