@@ -5,6 +5,11 @@ import { TransformControls } from 'three/examples/jsm/controls/TransformControls
 import { FBXLoader } from 'three/examples/jsm/loaders/FBXLoader.js';
 import { BVHLoader } from 'three/examples/jsm/loaders/BVHLoader.js';
 import { VRMLoaderPlugin } from '@pixiv/three-vrm';
+import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
+import { BokehPass } from 'three/examples/jsm/postprocessing/BokehPass.js';
+import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
 
 export const vrmData = [
   {
@@ -39,16 +44,46 @@ const renderer = new THREE.WebGLRenderer({ canvas: document.getElementById('main
 renderer.setSize(viewerElement.clientWidth, viewerElement.clientHeight);
 renderer.setPixelRatio(window.devicePixelRatio);
 renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.shadowMap.enabled = false;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
 const controls = new OrbitControls(camera, renderer.domElement);
 controls.target.set(0.0, 1.4, 0.0);
 controls.update();
 
 const light = new THREE.DirectionalLight(0xffffff, 1.0);
-light.position.set(1.0, 1.0, 1.0).normalize();
+light.position.set(2.0, 5.0, 2.0); // Make light higher so shadows are visible
+light.castShadow = true;
+light.shadow.mapSize.width = 2048;
+light.shadow.mapSize.height = 2048;
+light.shadow.camera.near = 0.5;
+light.shadow.camera.far = 20;
+light.shadow.camera.left = -5;
+light.shadow.camera.right = 5;
+light.shadow.camera.top = 5;
+light.shadow.camera.bottom = -5;
+light.shadow.bias = -0.001; // Reduce shadow acne
 scene.add(light);
 const ambient = new THREE.AmbientLight(0xffffff, 0.5);
 scene.add(ambient);
+
+// --- Post-Processing Setup ---
+const renderScene = new RenderPass(scene, camera);
+const bloomPass = new UnrealBloomPass(new THREE.Vector2(viewerElement.clientWidth, viewerElement.clientHeight), 0.5, 0.4, 0.85);
+const bokehPass = new BokehPass(scene, camera, {
+  focus: 2.0,
+  aperture: 0.0002,
+  maxblur: 0.01,
+  width: viewerElement.clientWidth,
+  height: viewerElement.clientHeight
+});
+const outputPass = new OutputPass();
+
+const composer = new EffectComposer(renderer);
+composer.addPass(renderScene);
+composer.addPass(bloomPass);
+composer.addPass(bokehPass);
+composer.addPass(outputPass);
 
 const clock = new THREE.Clock();
 
@@ -86,7 +121,12 @@ function animate() {
     }
   });
 
-  renderer.render(scene, camera);
+  const enablePost = document.getElementById('post-effects-toggle').checked;
+  if (enablePost) {
+    composer.render();
+  } else {
+    renderer.render(scene, camera);
+  }
 }
 animate();
 
@@ -95,6 +135,10 @@ window.addEventListener('resize', () => {
   camera.aspect = viewer.clientWidth / viewer.clientHeight;
   camera.updateProjectionMatrix();
   renderer.setSize(viewer.clientWidth, viewer.clientHeight);
+  composer.setSize(viewer.clientWidth, viewer.clientHeight);
+  if (bokehPass) {
+    bokehPass.uniforms['aspect'].value = camera.aspect;
+  }
 });
 
 // Target Switch UI
@@ -177,6 +221,15 @@ document.getElementById('vrm-upload').addEventListener('change', (e) => {
     data.gltf = gltf;
     data.vrm = gltf.userData.vrm;
     scene.add(data.vrm.scene);
+    
+    // Setup Shadows
+    data.vrm.scene.traverse((child) => {
+      if (child.isMesh) {
+        const shadowEnabled = document.getElementById('shadow-toggle').checked;
+        child.castShadow = shadowEnabled;
+        child.receiveShadow = shadowEnabled;
+      }
+    });
     
     // Spread them out slightly by default if loading into slot 1
     if (activeVrmIndex === 1 && data.vrm.scene.position.x === 0) {
@@ -1040,13 +1093,23 @@ document.getElementById('stage-upload').addEventListener('change', (e) => {
 
     scene.add(currentStage);
     
+    // Setup Shadows
+    currentStage.traverse((child) => {
+      if (child.isMesh) {
+        const shadowEnabled = document.getElementById('shadow-toggle').checked;
+        child.castShadow = shadowEnabled;
+        child.receiveShadow = shadowEnabled;
+      }
+    });
+    
     // スライダーのリセット
-    document.getElementById('stage-scale').value = 100;
-    document.getElementById('stage-scale-val').textContent = 100;
-    document.getElementById('stage-y').value = 0;
-    document.getElementById('stage-y-val').textContent = "0.00";
-    document.getElementById('stage-light').value = 5;
-    document.getElementById('stage-light-val').textContent = "1.0";
+    if(document.getElementById('stage-scale')) {
+      document.getElementById('stage-scale').value = 100;
+      document.getElementById('stage-scale-val').textContent = 100;
+      document.getElementById('stage-y').value = 0;
+      document.getElementById('stage-y-val').textContent = "0.00";
+    }
+    
     currentStage.scale.set(1, 1, 1);
     currentStage.position.set(0, 0, 0);
 
@@ -1075,21 +1138,59 @@ document.getElementById('stage-upload').addEventListener('change', (e) => {
   }
 });
 
-// Stage Option Sliders
-document.getElementById('stage-light').addEventListener('input', (e) => {
-  // slider: 0 ~ 100. (5 = 1.0x default modifier, 100 = 20.0x modifier)
+// Lighting & Effects UI Integration
+document.getElementById('shadow-toggle').addEventListener('change', (e) => {
+  renderer.shadowMap.enabled = e.target.checked;
+  scene.traverse(child => {
+    if (child.isMesh) {
+      child.castShadow = e.target.checked;
+      child.receiveShadow = e.target.checked;
+      if(child.material) child.material.needsUpdate = true;
+    }
+  });
+});
+
+document.getElementById('post-effects-toggle').addEventListener('change', (e) => {
+  const panel = document.getElementById('post-effects-panel');
+  panel.style.display = e.target.checked ? 'flex' : 'none';
+});
+
+document.getElementById('dir-light-intensity').addEventListener('input', (e) => {
+  const val = e.target.value / 100;
+  document.getElementById('dir-light-val').textContent = val.toFixed(2);
+  light.intensity = val;
+});
+
+document.getElementById('dir-light-color').addEventListener('input', (e) => {
+  light.color.set(e.target.value);
+});
+
+document.getElementById('amb-light-intensity').addEventListener('input', (e) => {
+  const val = e.target.value / 100;
+  document.getElementById('amb-light-val').textContent = val.toFixed(2);
+  ambient.intensity = val;
+});
+
+document.getElementById('amb-light-color').addEventListener('input', (e) => {
+  ambient.color.set(e.target.value);
+});
+
+document.getElementById('bloom-intensity').addEventListener('input', (e) => {
+  const val = e.target.value / 100;
+  document.getElementById('bloom-val').textContent = val.toFixed(2);
+  bloomPass.strength = val;
+});
+
+document.getElementById('dof-focus').addEventListener('input', (e) => {
   const val = Number(e.target.value);
-  const displayMultiplier = (val / 5).toFixed(1);
-  document.getElementById('stage-light-val').textContent = displayMultiplier;
-  
-  if (currentStage) {
-    const intensityMultiplier = val * 0.01; // val=5 -> 0.05
-    currentStage.traverse(child => {
-      if (child.isLight && child.userData.originalIntensity !== undefined) {
-        child.intensity = child.userData.originalIntensity * intensityMultiplier;
-      }
-    });
-  }
+  document.getElementById('dof-focus-val').textContent = val.toFixed(1);
+  bokehPass.uniforms['focus'].value = val;
+});
+
+document.getElementById('dof-aperture').addEventListener('input', (e) => {
+  const val = e.target.value / 1000;
+  document.getElementById('dof-aperture-val').textContent = val.toFixed(3);
+  bokehPass.uniforms['aperture'].value = val;
 });
 
 // Breathing intensity slider label update
