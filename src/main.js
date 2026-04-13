@@ -141,6 +141,17 @@ window.addEventListener('resize', () => {
   }
 });
 
+// Sidebar Toggle
+const sidebarToggle = document.getElementById('sidebar-toggle');
+const sidebar = document.getElementById('sidebar');
+if (sidebarToggle && sidebar) {
+  sidebarToggle.addEventListener('click', () => {
+    sidebar.classList.toggle('collapsed');
+    // 展開・折りたたみのCSSアニメーション(0.3s)完了後にリサイズをトリガー
+    setTimeout(() => window.dispatchEvent(new Event('resize')), 310);
+  });
+}
+
 // Target Switch UI
 document.getElementById('target-vrm0').addEventListener('click', () => {
   activeVrmIndex = 0;
@@ -201,8 +212,15 @@ document.getElementById('vrm-upload').addEventListener('change', (e) => {
   const file = e.target.files[0];
   if (!file) return;
 
-  document.getElementById('loading').classList.remove('hidden');
   const url = URL.createObjectURL(file);
+  loadVrmFromUrl(url, () => {
+    e.target.value = '';
+    URL.revokeObjectURL(url);
+  });
+});
+
+function loadVrmFromUrl(url, onComplete) {
+  document.getElementById('loading').classList.remove('hidden');
 
   const loader = new GLTFLoader();
   loader.register((parser) => new VRMLoaderPlugin(parser));
@@ -245,13 +263,33 @@ document.getElementById('vrm-upload').addEventListener('change', (e) => {
     refreshTargetUI();
     document.getElementById('loading').classList.add('hidden');
     
-    // reset input
-    e.target.value = '';
-    URL.revokeObjectURL(url);
+    if (onComplete) onComplete();
   }, undefined, (err) => {
     console.error(err);
     alert("Error loading VRM");
     document.getElementById('loading').classList.add('hidden');
+    if (onComplete) onComplete();
+  });
+}
+
+// Preset VRMs
+const presetVrms = import.meta.glob(['../VRM/*.vrm'], { query: '?url', import: 'default', eager: true });
+const vrmSelect = document.getElementById('preset-vrm-select');
+
+// Build UI options for Vite presets
+Object.keys(presetVrms).forEach(path => {
+  const filename = path.split('/').pop().replace(/\.vrm$/i, '');
+  const option = document.createElement('option');
+  option.value = presetVrms[path];
+  option.textContent = filename;
+  vrmSelect.appendChild(option);
+});
+
+vrmSelect.addEventListener('change', (e) => {
+  const value = e.target.value;
+  if (!value) return;
+  loadVrmFromUrl(value, () => {
+    vrmSelect.value = '';
   });
 });
 
@@ -1057,14 +1095,8 @@ function loadBvhFromUrl(url, onComplete) {
   });
 }
 
-// Stage Loading
-document.getElementById('stage-upload').addEventListener('change', (e) => {
-  const file = e.target.files[0];
-  if (!file) return;
-
+function loadStageFromUrl(url, ext, onComplete) {
   document.getElementById('loading').classList.remove('hidden');
-  const url = URL.createObjectURL(file);
-  const ext = file.name.split('.').pop().toLowerCase();
 
   const handleStageLoad = (stageObject) => {
     if (currentStage) {
@@ -1114,16 +1146,18 @@ document.getElementById('stage-upload').addEventListener('change', (e) => {
     currentStage.position.set(0, 0, 0);
 
     // UI表示
-    document.getElementById('stage-controls').classList.remove('hidden');
+    if (document.getElementById('stage-controls')) {
+      document.getElementById('stage-controls').classList.remove('hidden');
+    }
     document.getElementById('loading').classList.add('hidden');
-    URL.revokeObjectURL(url);
+    if (onComplete) onComplete();
   };
 
   const throwError = (err) => {
     console.error(err);
     alert('Failed to load stage.');
     document.getElementById('loading').classList.add('hidden');
-    URL.revokeObjectURL(url);
+    if (onComplete) onComplete();
   };
 
   if (ext === 'fbx') {
@@ -1135,8 +1169,47 @@ document.getElementById('stage-upload').addEventListener('change', (e) => {
   } else {
     alert("Unsupported stage format. Please use FBX or GLB/GLTF.");
     document.getElementById('loading').classList.add('hidden');
+    if (onComplete) onComplete();
   }
+}
+
+// Stage Loading
+document.getElementById('stage-upload').addEventListener('change', (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+
+  const url = URL.createObjectURL(file);
+  const ext = file.name.split('.').pop().toLowerCase();
+
+  loadStageFromUrl(url, ext, () => {
+    e.target.value = '';
+    URL.revokeObjectURL(url);
+  });
 });
+
+// Preset Stages
+const presetStages = import.meta.glob(['../stage/*.fbx', '../stage/*.glb', '../stage/*.gltf'], { query: '?url', import: 'default', eager: true });
+const stageSelect = document.getElementById('preset-stage-select');
+
+// Build UI options for Vite presets
+Object.keys(presetStages).forEach(path => {
+  const filename = path.split('/').pop().replace(/\.(fbx|glb|gltf)$/i, '');
+  const option = document.createElement('option');
+  option.value = presetStages[path];
+  option.dataset.ext = path.split('.').pop().toLowerCase();
+  option.textContent = filename;
+  stageSelect.appendChild(option);
+});
+
+stageSelect.addEventListener('change', (e) => {
+  const value = e.target.value;
+  if (!value) return;
+  const ext = e.target.options[e.target.selectedIndex].dataset.ext;
+  loadStageFromUrl(value, ext, () => {
+    stageSelect.value = '';
+  });
+});
+
 
 // Lighting & Effects UI Integration
 document.getElementById('shadow-toggle').addEventListener('change', (e) => {
@@ -1182,14 +1255,14 @@ document.getElementById('bloom-intensity').addEventListener('input', (e) => {
 });
 
 document.getElementById('dof-focus').addEventListener('input', (e) => {
-  const val = Number(e.target.value);
+  const val = Number(e.target.value) / 10;
   document.getElementById('dof-focus-val').textContent = val.toFixed(1);
   bokehPass.uniforms['focus'].value = val;
 });
 
 document.getElementById('dof-aperture').addEventListener('input', (e) => {
-  const val = e.target.value / 1000;
-  document.getElementById('dof-aperture-val').textContent = val.toFixed(3);
+  const val = e.target.value / 10000;
+  document.getElementById('dof-aperture-val').textContent = val.toFixed(4);
   bokehPass.uniforms['aperture'].value = val;
 });
 

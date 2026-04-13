@@ -8,10 +8,13 @@
   </head>
   <body>
     <div id="app">
+      <!-- Sidebar Toggle -->
+      <button id="sidebar-toggle" title="Toggle Menu">☰</button>
+
       <!-- 編集用サイドバー -->
       <aside id="sidebar">
         <header>
-          <h1>VRM BlendShape Editor</h1>
+          <h1 style="margin-left: 45px;">VRM BlendShape Editor</h1>
           <!-- Multi-VRM Target Selector -->
           <div style="display: flex; gap: 10px; margin-bottom: 10px;">
             <button id="target-vrm0" class="btn primary" style="flex:1;">Target: VRM 1</button>
@@ -19,8 +22,13 @@
           </div>
 
           <div class="file-action">
-            <label for="vrm-upload" class="btn primary" style="flex:1;">Load VRM</label>
-            <input type="file" id="vrm-upload" accept=".vrm" style="display:none;" />
+            <div style="display: flex; gap: 10px;">
+              <select id="preset-vrm-select" class="btn" style="flex: 2;">
+                <option value="">-- Preset VRM --</option>
+              </select>
+              <label for="vrm-upload" class="btn primary" style="flex:1;">Load VRM</label>
+              <input type="file" id="vrm-upload" accept=".vrm" style="display:none;" />
+            </div>
           </div>
 
           <div class="file-action" style="margin-top: 10px;">
@@ -63,8 +71,13 @@
           </div>
           
           <div class="file-action" style="margin-top: 10px;">
-            <label for="stage-upload" class="btn">Load Stage</label>
-            <input type="file" id="stage-upload" accept=".fbx,.glb,.gltf" style="display:none;" />
+            <div style="display: flex; gap: 10px;">
+              <select id="preset-stage-select" class="btn" style="flex: 2;">
+                <option value="">-- Preset Stage --</option>
+              </select>
+              <label for="stage-upload" class="btn">Load Stage</label>
+              <input type="file" id="stage-upload" accept=".fbx,.glb,.gltf" style="display:none;" />
+            </div>
           </div>
 
           <!-- 3D Transform Controls -->
@@ -115,11 +128,11 @@
               </div>
               <div class="preview-slider" style="margin: 0;">
                 <label style="font-size: 0.75rem;">Focus Distance <span id="dof-focus-val">2.0</span></label>
-                <input type="range" id="dof-focus" min="1" max="1000" value="200" />
+                <input type="range" id="dof-focus" min="1" max="100" value="20" />
               </div>
               <div class="preview-slider" style="margin: 0;">
-                <label style="font-size: 0.75rem;">Aperture (Blur) <span id="dof-aperture-val">0.02</span></label>
-                <input type="range" id="dof-aperture" min="0" max="100" value="20" />
+                <label style="font-size: 0.75rem;">Aperture (Blur) <span id="dof-aperture-val">0.0002</span></label>
+                <input type="range" id="dof-aperture" min="0" max="100" value="2" />
               </div>
             </div>
           </div>
